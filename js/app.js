@@ -221,10 +221,7 @@ function detectExhibits() {
       const score = hit.score + p / Math.max(1, State.numPages);
       const prev = candidates.get(key);
       if (prev && prev.score >= score) continue;
-      candidates.set(key, {
-        key, kind: hit.kind, id: normId(hit.id), page: p, cap,
-        title: hit.title, score, region: computeRegion(hit.kind, cap, model),
-      });
+      candidates.set(key, { key, kind: hit.kind, id: normId(hit.id), page: p, cap, title: hit.title, score });
     }
   }
 
@@ -233,41 +230,73 @@ function detectExhibits() {
     const A = State.exhibits.get(a), B = State.exhibits.get(b);
     return A.page - B.page || A.cap.top - B.cap.top;
   });
+
+  // Second pass: now that EVERY caption is known, compute crop regions using all
+  // other exhibits' captions on the page as hard walls. This is robust even when
+  // a neighbour caption was missed by the line-level re-scan inside computeRegion.
+  const byPage = new Map();
+  for (const ex of State.exhibits.values()) {
+    if (!byPage.has(ex.page)) byPage.set(ex.page, []);
+    byPage.get(ex.page).push(ex.cap);
+  }
+  for (const ex of State.exhibits.values()) {
+    const others = byPage.get(ex.page).filter((c) => c !== ex.cap);
+    ex.region = computeRegion(ex.kind, ex.cap, State.pageModel.get(ex.page), others);
+  }
 }
 
 // Region (in scale-1 page coords) we crop for a preview. Figures put their
 // graphic above OR below the caption (and the graphic is an image, invisible to
 // the text layer), so we extend generously on both sides and let neighbouring
 // captions / "Notes:" lines bound the crop. Works regardless of caption side.
-function computeRegion(kind, cap, model) {
+function computeRegion(kind, cap, model, siblings = []) {
   const H = model.hpt, W = model.wpt, c = model.content, pad = H * 0.012;
+  const MAXG = 0.80 * H;   // how far we'll reach toward the graphic/body
+  const SMALL = 0.06 * H;  // trim on the non-graphic side (keeps a one-line note)
 
   // horizontal band: full width for exhibits that span columns, otherwise the
   // single column the caption lives in (so a 2-col figure preview isn't garbage)
   const band = regionXBand(cap, model);
+  const inBand = (x) => x >= band.x - 1 && x <= band.x + band.w + 1;
 
-  const up = kind === "figure" ? 0.55 : 0.06;
-  const down = kind === "figure" ? 0.55 : 0.60;
-  let y0 = cap.top - up * H;
-  let y1 = cap.bottom + down * H;
-
-  // nearest boundary (another caption or a Notes/Source line) above and below,
-  // considering only lines in the same horizontal band
-  let boundAbove = -Infinity, boundBelow = Infinity;
+  // nearest boundary above/below that we never cross: any OTHER exhibit caption
+  // on this page (known from the first pass) plus any Notes/Source line in-band
+  let above = -Infinity, below = Infinity;
+  for (const s of siblings) {
+    if (!inBand((s.left + s.right) / 2)) continue;
+    if (s.bottom <= cap.top + 1) above = Math.max(above, s.bottom);
+    else if (s.top >= cap.bottom - 1) below = Math.min(below, s.top);
+  }
   for (const line of model.lines) {
     const lx = line.items.length ? (line.items[0].x + line.items[line.items.length - 1].x + line.items[line.items.length - 1].w) / 2 : -1;
-    if (lx < band.x || lx > band.x + band.w) continue;
+    if (!inBand(lx)) continue;
     const t = lineText(line);
-    if (!isCaptionLine(t) && !NOTE_RE.test(t)) continue;
+    if (!NOTE_RE.test(t)) continue;
     const top = line.y, bot = line.y + line.h;
     if (bot > cap.top - 1 && top < cap.bottom + 1) continue; // the caption itself
-    if (bot <= cap.top + 1) boundAbove = Math.max(boundAbove, bot);
-    else if (top >= cap.bottom - 1) boundBelow = Math.min(boundBelow, top);
+    if (bot <= cap.top + 1) above = Math.max(above, bot);
+    else if (top >= cap.bottom - 1) below = Math.min(below, top);
   }
-  if (boundAbove > -Infinity) y0 = Math.max(y0, boundAbove + pad);
-  if (boundBelow < Infinity) y1 = Math.min(y1, boundBelow - pad);
+  const prevBound = above > -Infinity ? above : Math.max(0, c.top - pad);
+  const nextBound = below < Infinity ? below : Math.min(H, c.bottom + pad);
+  const gapAbove = cap.top - prevBound;     // empty space above the caption
+  const gapBelow = nextBound - cap.bottom;  // empty space below the caption
 
-  // clamp to actual content + margins, then to the page
+  // The graphic / table body lives on the side with MORE space. Reach fully to
+  // that side (up to MAXG); trim the other side to a small margin so the crop
+  // can never spill into the neighbouring exhibit.
+  let y0, y1;
+  if (gapAbove >= gapBelow) {
+    y0 = cap.top - Math.min(MAXG, gapAbove);
+    y1 = cap.bottom + Math.min(SMALL, gapBelow);
+  } else {
+    y0 = cap.top - Math.min(SMALL, gapAbove);
+    y1 = cap.bottom + Math.min(MAXG, gapBelow);
+  }
+  // never cross a real neighbouring caption/note
+  if (above > -Infinity) y0 = Math.max(y0, above + pad);
+  if (below < Infinity) y1 = Math.min(y1, below - pad);
+  // clamp to page content
   y0 = clamp(y0, Math.max(0, c.top - pad), H);
   y1 = clamp(y1, 0, Math.min(H, c.bottom + pad));
   if (y1 - y0 < H * 0.08) { y0 = clamp(cap.top - 0.06 * H, 0, H); y1 = clamp(cap.bottom + 0.3 * H, 0, H); }
@@ -788,6 +817,7 @@ async function loadDocument(source, label) {
     setLoading(true, "Finding figures & tables…", 0.86);
     detectExhibits();
     detectReferences();
+    if (location.search.includes("debug")) window.__ep = { State, computeRegion, isCaptionLine, lineText };
 
     setLoading(true, "Laying out…", 0.95);
     enterReader();
