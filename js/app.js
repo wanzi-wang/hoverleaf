@@ -10,9 +10,10 @@
         transparent clickable hot-spots over them.
      4. Hover a reference → preview card; click → pinnable floating window.
    ===================================================================== */
-import * as pdfjsLib from "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.min.mjs";
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-  "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.worker.min.mjs";
+import * as pdfjsLib from "./vendor/pdf.min.mjs";
+// Self-hosted worker → the app runs fully offline and nothing about the paper
+// (not even which URL you opened) is sent to any third party.
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL("./vendor/pdf.worker.min.mjs", import.meta.url).href;
 
 const { Util } = pdfjsLib;
 const $ = (s, r = document) => r.querySelector(s);
@@ -94,34 +95,65 @@ async function buildPageModel(pageNum) {
     cRight = Math.max(cRight, left + w);
   }
 
-  // group items into visual lines (by vertical position)
-  const sorted = [...items].sort((a, b) => a.y - b.y || a.x - b.x);
+  // Detect a two-column layout, then group items into lines PER COLUMN so a
+  // left-column line and a right-column line at the same height don't merge
+  // into one garbled "line" (which would wreck caption + reference detection
+  // on AER/QJE-style published papers).
+  const columns = detectColumns(items, vp.width);
   const lines = [];
-  for (const it of sorted) {
-    const last = lines[lines.length - 1];
-    if (last && Math.abs(it.y - last.y) < last.h * 0.7) {
-      last.items.push(it);
-      last.y = (last.y * (last.items.length - 1) + it.y) / last.items.length;
-      last.h = Math.max(last.h, it.h);
-    } else {
-      lines.push({ y: it.y, h: it.h, items: [it] });
+  columns.forEach((col, ci) => {
+    const colItems = items.filter((it) => {
+      const cx = it.x + it.w / 2;
+      return cx >= col.x0 && cx < col.x1;
+    }).sort((a, b) => a.y - b.y || a.x - b.x);
+    const colLines = [];
+    for (const it of colItems) {
+      const last = colLines[colLines.length - 1];
+      if (last && Math.abs(it.y - last.y) < last.h * 0.7) {
+        last.items.push(it);
+        last.y = (last.y * (last.items.length - 1) + it.y) / last.items.length;
+        last.h = Math.max(last.h, it.h);
+      } else {
+        colLines.push({ y: it.y, h: it.h, items: [it], col: ci });
+      }
     }
-  }
+    lines.push(...colLines);
+  });
   for (const ln of lines) ln.items.sort((a, b) => a.x - b.x);
 
   const model = {
-    wpt: vp.width, hpt: vp.height, items, lines,
+    wpt: vp.width, hpt: vp.height, items, lines, columns,
     content: { top: cTop, bottom: cBottom, left: cLeft, right: cRight },
   };
   State.pageModel.set(pageNum, model);
   return model;
 }
 
+// Find a clean vertical gutter near the page centre. Returns one band (single
+// column) or two bands (two columns). Conservative: only splits when there is a
+// near-empty gutter with well-balanced, populated sides.
+function detectColumns(items, W) {
+  if (items.length < 40) return [{ x0: 0, x1: W }];
+  let best = null;
+  for (let s = W * 0.4; s <= W * 0.6; s += W * 0.01) {
+    let straddle = 0, left = 0, right = 0;
+    for (const it of items) {
+      if (it.x < s - 1 && it.x + it.w > s + 1) straddle++;
+      else if (it.x + it.w / 2 < s) left++; else right++;
+    }
+    const bal = Math.min(left, right) / Math.max(1, Math.max(left, right));
+    if (left > 12 && right > 12 && straddle < items.length * 0.04 && bal > 0.4) {
+      if (!best || straddle < best.straddle) best = { s, straddle };
+    }
+  }
+  return best ? [{ x0: 0, x1: best.s }, { x0: best.s, x1: W }] : [{ x0: 0, x1: W }];
+}
+
 /* =====================================================================
    STEP 2 — Caption / exhibit detection
    ===================================================================== */
 const CAPTION_RE =
-  /^\s*(figures?|figs?\.?|tables?|tabs?\.?)\s*\.?\s*([A-Za-z]?\.?\d+[A-Za-z]?)\b([\s\S]*)$/i;
+  /^\s*(figures?|figs?\.?|tables?|tabs?\.?)\s*\.?\s*([A-Za-z]{0,3}\.?\d+[A-Za-z]?)\b([\s\S]*)$/i;
 const NOTE_RE = /^\s*(notes?|sources?)\s*[:.—]/i;
 const CAP_THRESHOLD = 3;
 
@@ -153,8 +185,10 @@ function scoreCaption(rest) {
   const wc = title.split(/\s+/).filter(Boolean).length;
   if (wc > 0 && wc <= 12) score += 1;
   if (wc > 16) score -= 3;                                           // long → it's a sentence
-  if (/\b(is|are|was|were|be|been|shows?|reports?|presents?|displays?|summari[sz]ed|documented|provides?|reveals?|suggests?|indicates?|implies?|we|our|this|these|which|that)\b/i.test(title))
-    score -= 4;                                                      // finite verb / pronoun → prose
+  // a finite verb only signals prose in a longer run; short Title-Case captions
+  // like "Treatment effects are larger in rural areas" stay valid
+  if (wc > 6 && /\b(is|are|was|were|be|been|shows?|reports?|presents?|displays?|summari[sz]ed|documented|provides?|reveals?|suggests?|indicates?|implies?|we|our|this|these|which|that)\b/i.test(title))
+    score -= 4;
   if (/\b(figures?|figs?\.?|tables?|tabs?\.?|panels?)\s*\.?\s*\d/i.test(title)) score -= 3; // cites another exhibit
   if (/^[A-Z]/.test(title)) score += 1;
   return { score, title: title.slice(0, 140) };
@@ -207,14 +241,22 @@ function detectExhibits() {
 // captions / "Notes:" lines bound the crop. Works regardless of caption side.
 function computeRegion(kind, cap, model) {
   const H = model.hpt, W = model.wpt, c = model.content, pad = H * 0.012;
+
+  // horizontal band: full width for exhibits that span columns, otherwise the
+  // single column the caption lives in (so a 2-col figure preview isn't garbage)
+  const band = regionXBand(cap, model);
+
   const up = kind === "figure" ? 0.55 : 0.06;
   const down = kind === "figure" ? 0.55 : 0.60;
   let y0 = cap.top - up * H;
   let y1 = cap.bottom + down * H;
 
-  // nearest boundary (another caption or a Notes/Source line) above and below
+  // nearest boundary (another caption or a Notes/Source line) above and below,
+  // considering only lines in the same horizontal band
   let boundAbove = -Infinity, boundBelow = Infinity;
   for (const line of model.lines) {
+    const lx = line.items.length ? (line.items[0].x + line.items[line.items.length - 1].x + line.items[line.items.length - 1].w) / 2 : -1;
+    if (lx < band.x || lx > band.x + band.w) continue;
     const t = lineText(line);
     if (!isCaptionLine(t) && !NOTE_RE.test(t)) continue;
     const top = line.y, bot = line.y + line.h;
@@ -229,14 +271,36 @@ function computeRegion(kind, cap, model) {
   y0 = clamp(y0, Math.max(0, c.top - pad), H);
   y1 = clamp(y1, 0, Math.min(H, c.bottom + pad));
   if (y1 - y0 < H * 0.08) { y0 = clamp(cap.top - 0.06 * H, 0, H); y1 = clamp(cap.bottom + 0.3 * H, 0, H); }
-  return { x: 0, y: y0, w: W, h: y1 - y0 };
+  return { x: band.x, y: y0, w: band.w, h: y1 - y0 };
+}
+
+// Horizontal crop band for an exhibit: full page if its caption spans columns,
+// else the column band that contains the caption.
+function regionXBand(cap, model) {
+  const cols = model.columns || [{ x0: 0, x1: model.wpt }];
+  if (cols.length < 2) return { x: 0, w: model.wpt };
+  const colW = cols[0].x1 - cols[0].x0;
+  if (cap.right - cap.left > colW * 1.25) return { x: 0, w: model.wpt }; // spans columns
+  const cx = (cap.left + cap.right) / 2;
+  const col = cols.find((c) => cx >= c.x0 && cx < c.x1) || cols[0];
+  const pad = model.wpt * 0.012;
+  return { x: Math.max(0, col.x0 - pad), w: Math.min(model.wpt - Math.max(0, col.x0 - pad), col.x1 - col.x0 + 2 * pad) };
 }
 
 /* =====================================================================
    STEP 3 — In-text reference detection
    ===================================================================== */
-const REF_HEAD = /(figures?|figs?\.?|tables?|tabs?\.?)\s*\.?\s*([A-Za-z]?\.?\d+[A-Za-z]?)/gi;
-const REF_TAIL = /^(\s*(?:,|;|and|&|or|to|through|–|—|-)\s*(?:and\s*)?)([A-Za-z]?\.?\d+[A-Za-z]?)\b/i;
+const REF_HEAD = /(figures?|figs?\.?|tables?|tabs?\.?)\s*\.?\s*([A-Za-z]{0,3}\.?\d+[A-Za-z]?)/gi;
+const REF_TAIL = /^(\s*(?:,|;|and|&|or|to|through|–|—|-)\s*(?:and\s*)?)([A-Za-z]{0,3}\.?\d+[A-Za-z]?)\b/i;
+
+// Resolve a reference key to an exhibit, falling back from a panel id to its
+// base (e.g. a "Figure 1a" reference resolves to the "Figure 1" caption).
+function resolveExhibit(key) {
+  if (State.exhibits.has(key)) return State.exhibits.get(key);
+  const base = key.replace(/[A-Za-z]+$/, ""); // figure-1A -> figure-1
+  if (base !== key && State.exhibits.has(base)) return State.exhibits.get(base);
+  return null;
+}
 
 // flatten a page model into a string + per-char box map
 function pageTextIndex(model) {
@@ -372,12 +436,26 @@ function observePages() {
   pageObserver = new IntersectionObserver(
     (entries) => {
       for (const en of entries) {
-        if (en.isIntersecting) renderPage(+en.target.dataset.page);
+        const p = +en.target.dataset.page;
+        if (en.isIntersecting) renderPage(p);
+        else unrenderPage(p); // free canvases far from the viewport (memory)
       }
     },
-    { root: $("#viewerScroll"), rootMargin: "600px 0px" }
+    { root: $("#viewerScroll"), rootMargin: "900px 0px" }
   );
   for (const { wrap } of State.pageEls.values()) pageObserver.observe(wrap);
+}
+
+// Release a rendered page's canvas/layers so a 60-page paper doesn't accumulate
+// hundreds of MB of bitmaps. The placeholder keeps its size; it re-renders when
+// it scrolls back into range.
+function unrenderPage(p) {
+  const el = State.pageEls.get(p);
+  if (!el || !el.rendered) return;
+  if (el.canvas) { el.canvas.width = el.canvas.height = 0; }
+  el.wrap.innerHTML = "";
+  el.canvas = null;
+  el.rendered = false;
 }
 
 async function renderPage(p) {
@@ -437,16 +515,21 @@ function measureWidth(str, fontPx) {
 function buildLinkLayer(container, p, scale) {
   for (const ref of State.refs) {
     if (ref.page !== p) continue;
-    const ex = State.exhibits.get(ref.key);
+    const ex = resolveExhibit(ref.key);
+    const label = ex
+      ? `Preview ${ex.kind === "table" ? "Table" : "Figure"} ${ex.id}${ex.title ? ", " + ex.title : ""}`
+      : `${ref.kind} ${ref.id} — caption not found`;
     for (const b of ref.boxes) {
       const a = document.createElement("div");
-      a.className = "ref-link";
+      a.className = ex ? "ref-link" : "ref-link unresolved";
       a.style.left = `${b.x * scale}px`;
       a.style.top = `${b.y * scale}px`;
       a.style.width = `${b.w * scale}px`;
       a.style.height = `${b.h * scale}px`;
       a.dataset.key = ref.key;
-      if (!ex) { a.style.opacity = ".45"; a.title = `${ref.key} — caption not found`; }
+      a.tabIndex = 0;                       // keyboard reachable
+      a.setAttribute("role", "button");
+      a.setAttribute("aria-label", label);
       wireRefLink(a, ref.key);
       container.appendChild(a);
     }
@@ -481,26 +564,31 @@ const hoverCard = $("#hoverCard");
 let hoverTimer, hoverKey = null;
 
 function wireRefLink(el, key) {
+  const open = (x, y) => {
+    hideHoverCard();
+    const ex = resolveExhibit(key);
+    if (!ex) { jumpToText(key); return; }
+    openPip(ex, x, y, el);
+  };
+  // mouse: hover to preview, click to pin
   el.addEventListener("mouseenter", () => {
     clearTimeout(hoverTimer);
     hoverTimer = setTimeout(() => showHoverCard(el, key), 130);
   });
-  el.addEventListener("mouseleave", () => {
-    clearTimeout(hoverTimer);
-    hideHoverCard();
-  });
-  el.addEventListener("click", (e) => {
-    e.preventDefault();
-    hideHoverCard();
-    const ex = State.exhibits.get(key);
-    if (!ex) { jumpToText(key); return; }
-    openPip(ex, e.clientX, e.clientY);
+  el.addEventListener("mouseleave", () => { clearTimeout(hoverTimer); hideHoverCard(); });
+  el.addEventListener("click", (e) => { e.preventDefault(); const r = el.getBoundingClientRect(); open(r.left + r.width / 2, r.bottom); });
+  // keyboard: focus previews, Enter/Space pins
+  el.addEventListener("focus", () => showHoverCard(el, key));
+  el.addEventListener("blur", () => hideHoverCard());
+  el.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); const r = el.getBoundingClientRect(); open(r.right, r.bottom); }
   });
 }
 
 async function showHoverCard(anchor, key) {
-  const ex = State.exhibits.get(key);
+  const ex = resolveExhibit(key);
   if (!ex) return;
+  dismissCoach();
   hoverKey = key;
   $(".hc-label", hoverCard).textContent =
     `${ex.kind === "table" ? "Table" : "Figure"} ${ex.id}${ex.title ? " · " + ex.title : ""}`;
@@ -529,11 +617,14 @@ function hideHoverCard() { hoverKey = null; hoverCard.hidden = true; }
 let pipZ = 50;
 const openPips = new Map(); // key -> element
 
-async function openPip(ex, x, y) {
+async function openPip(ex, x, y, opener) {
   if (openPips.has(ex.key)) { focusPip(openPips.get(ex.key)); return; }
   const tpl = $("#pipTemplate").content.firstElementChild.cloneNode(true);
   tpl.dataset.key = ex.key;
   tpl.style.zIndex = ++pipZ;
+  tpl.setAttribute("role", "dialog");
+  tpl.setAttribute("aria-label", `${ex.kind === "table" ? "Table" : "Figure"} ${ex.id} preview`);
+  tpl._opener = opener || null;
   $(".pip-title", tpl).textContent =
     `${ex.kind === "table" ? "Table" : "Figure"} ${ex.id} (p.${ex.page})`;
   document.body.appendChild(tpl);
@@ -565,43 +656,53 @@ async function openPip(ex, x, y) {
 
   makeDraggable(tpl, $(".pip-head", tpl));
   makeResizable(tpl, $(".pip-resize", tpl), wrap, async (newW) => { curW = newW; await rerender(); });
-  tpl.addEventListener("mousedown", () => focusPip(tpl));
+  tpl.addEventListener("pointerdown", () => focusPip(tpl));
   focusPip(tpl);
 }
 function focusPip(el) { el.style.zIndex = ++pipZ; el.focus({ preventScroll: true }); }
-function closePip(key) { const el = openPips.get(key); if (el) { el.remove(); openPips.delete(key); } }
+function closePip(key) {
+  const el = openPips.get(key);
+  if (!el) return;
+  const opener = el._opener;
+  el.remove();
+  openPips.delete(key);
+  if (opener && document.contains(opener)) opener.focus({ preventScroll: true }); // return focus
+}
 function closeAllPips(onlyUnpinned = true) {
   for (const [k, el] of [...openPips]) if (!onlyUnpinned || !el.classList.contains("pinned")) closePip(k);
 }
 
+// Pointer Events → one code path works for mouse, trackpad and touch.
 function makeDraggable(el, handle) {
-  handle.addEventListener("mousedown", (e) => {
+  handle.addEventListener("pointerdown", (e) => {
     if (e.target.closest(".pip-btn")) return;
     e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
     const sx = e.clientX, sy = e.clientY;
     const r = el.getBoundingClientRect();
     const move = (ev) => {
       el.style.left = `${clamp(r.left + ev.clientX - sx, -el.offsetWidth + 80, window.innerWidth - 80)}px`;
       el.style.top = `${clamp(r.top + ev.clientY - sy, 54, window.innerHeight - 40)}px`;
     };
-    const up = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); };
-    document.addEventListener("mousemove", move);
-    document.addEventListener("mouseup", up);
+    const up = () => { handle.removeEventListener("pointermove", move); handle.removeEventListener("pointerup", up); };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", up);
   });
 }
 function makeResizable(el, grip, wrap, onDone) {
-  grip.addEventListener("mousedown", (e) => {
+  grip.addEventListener("pointerdown", (e) => {
     e.preventDefault(); e.stopPropagation();
+    grip.setPointerCapture(e.pointerId);
     const sx = e.clientX;
     const startW = el.offsetWidth;
     const move = (ev) => { el.style.width = `${clamp(startW + ev.clientX - sx, 240, 1400)}px`; };
     const up = async () => {
-      document.removeEventListener("mousemove", move);
-      document.removeEventListener("mouseup", up);
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", up);
       await onDone(el.offsetWidth);
     };
-    document.addEventListener("mousemove", move);
-    document.addEventListener("mouseup", up);
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
   });
 }
 
@@ -702,11 +803,46 @@ async function loadDocument(source, label) {
     console.error(err);
     setLoading(false);
     $("#landing").hidden = false;
-    toast(`Couldn't open this PDF: ${err.message || err}`, 5000);
+    const remote = typeof source === "object" && source.url;
+    const corsLike = /unexpected|fetch|cors|networkerror|failed to|load/i.test(err.message || "") || err.name === "UnexpectedResponseException";
+    if (remote && corsLike)
+      toast("That site blocks loading PDFs from other pages. Download the file and drop it here instead.", 6500);
+    else if (err.name === "InvalidPDFException")
+      toast("That file doesn't look like a valid PDF.", 5000);
+    else
+      toast(`Couldn't open this PDF: ${err.message || err}`, 5000);
   }
 }
 
+/* first-run coach-mark pointing at the first reference link */
+function maybeShowCoach() {
+  try { if (localStorage.getItem("ep-coached")) return; } catch {}
+  setTimeout(() => {
+    const link = $(".ref-link:not(.unresolved)");
+    const coach = $("#coach");
+    if (!link || !coach) return;
+    const r = link.getBoundingClientRect();
+    if (r.top < 60 || r.top > window.innerHeight - 80) { $("#viewerScroll").scrollBy({ top: r.top - 240 }); }
+    const r2 = link.getBoundingClientRect();
+    coach.hidden = false;
+    const cw = coach.offsetWidth;
+    let left = clamp(r2.left - 20, 10, window.innerWidth - cw - 10);
+    coach.style.left = `${left}px`;
+    coach.style.top = `${r2.bottom + 14}px`;
+    const arrow = $(".coach-arrow", coach);
+    arrow.style.left = `${clamp(r2.left + r2.width / 2 - left - 6, 12, cw - 24)}px`;
+    arrow.style.top = "-6px";
+    $("#viewerScroll").addEventListener("scroll", dismissCoach, { once: true });
+  }, 1200);
+}
+function dismissCoach() {
+  $("#coach").hidden = true;
+  try { localStorage.setItem("ep-coached", "1"); } catch {}
+}
+
 function enterReader() {
+  // fit page width to the viewport (so phones don't get a horizontally-scrolling page)
+  State.baseWidthCss = clamp(window.innerWidth - (window.innerWidth > 760 ? 320 : 28), 300, 860);
   $("#topbar").hidden = false;
   $("#reader").hidden = false;
   $("#docTitle").textContent = State.filename;
@@ -717,9 +853,10 @@ function enterReader() {
   $("#exhibitCounts").textContent = `${nF} fig · ${nT} tab`;
   buildPagePlaceholders();
   buildSidebar("all");
-  $("#sidebar").hidden = State.exhibitOrder.length === 0;
+  $("#sidebar").hidden = State.exhibitOrder.length === 0 || window.innerWidth <= 760;
   updateZoomLabel();
   trackScroll();
+  if (State.exhibitOrder.length) maybeShowCoach();
 }
 
 /* =====================================================================
@@ -811,9 +948,11 @@ function wireUI() {
   };
 
   // keyboard
+  $("#coachDismiss").onclick = dismissCoach;
+
   document.addEventListener("keydown", (e) => {
     if (e.target.matches("input")) return;
-    if (e.key === "Escape") { if (openPips.size) closeAllPips(true); else hideHoverCard(); }
+    if (e.key === "Escape") { if (openPips.size) closeAllPips(true); else { hideHoverCard(); dismissCoach(); } }
     else if (e.key === "d" || e.key === "D") $("#btnTheme").click();
     else if (e.key === "f" || e.key === "F") $("#btnSidebar").click();
     else if (e.key === "o" || e.key === "O") fileInput.click();

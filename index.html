@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Enjoyable Paper · read econ papers without the scroll-back</title>
 <meta name="description" content="A calmer way to read economics papers. Hover any 'Figure 3' or 'Table 2' and see it instantly — no more flipping to the back of the PDF." />
-<link rel="preconnect" href="https://cdn.jsdelivr.net" />
 <link rel="stylesheet" href="css/styles.css" />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%96%3C/text%3E%3C/svg%3E" />
 </head>
@@ -50,7 +49,7 @@
     <div id="dropzone" tabindex="0">
       <div class="dz-icon">⬇︎</div>
       <div class="dz-main">Drop a PDF here, or <span class="dz-link">choose a file</span></div>
-      <div class="dz-sub">Everything happens in your browser. Your paper is never uploaded.</div>
+      <div class="dz-sub">Runs entirely in your browser — your PDF never leaves your device.</div>
       <input type="file" id="fileInput" accept="application/pdf" hidden />
     </div>
 
@@ -92,7 +91,7 @@
 </div>
 
 <!-- ===== Loading overlay ===== -->
-<div id="loadingOverlay" hidden>
+<div id="loadingOverlay" hidden role="status" aria-live="polite">
   <div class="spinner"></div>
   <div class="load-text" id="loadText">Reading your paper…</div>
   <div class="load-bar"><div class="load-bar-fill" id="loadFill"></div></div>
@@ -116,9 +115,15 @@
   </div>
 </template>
 
-<div id="hoverCard" hidden><div class="hc-label"></div><div class="hc-canvas-wrap"></div><div class="hc-hint">click to pin · scroll to zoom</div></div>
+<div id="hoverCard" hidden aria-hidden="true"><div class="hc-label"></div><div class="hc-canvas-wrap"></div><div class="hc-hint">click to pin · drag to move</div></div>
 
-<div id="toast" hidden></div>
+<div id="coach" hidden>
+  <span class="coach-arrow"></span>
+  <div>Tip: hover (or <b>Tab</b> + <b>Enter</b>) any underlined <b>Figure</b> / <b>Table</b> reference to preview it here — no scrolling to the back.</div>
+  <button class="coach-dismiss" id="coachDismiss">Got it</button>
+</div>
+
+<div id="toast" hidden role="status" aria-live="polite"></div>
 
 <script type="module" src="js/app.js"></script>
 </body>
