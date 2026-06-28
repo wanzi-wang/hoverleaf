@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Enjoyable Paper · read econ papers without the scroll-back</title>
+<meta name="description" content="A calmer way to read economics papers. Hover any 'Figure 3' or 'Table 2' and see it instantly — no more flipping to the back of the PDF." />
+<link rel="preconnect" href="https://cdn.jsdelivr.net" />
+<link rel="stylesheet" href="css/styles.css" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%96%3C/text%3E%3C/svg%3E" />
+</head>
+<body>
+<!-- ===== Top bar ===== -->
+<header id="topbar" hidden>
+  <div class="bar-left">
+    <button class="icon-btn" id="btnSidebar" title="Toggle figures &amp; tables panel (F)">
+      <svg viewBox="0 0 24 24" class="ic"><path d="M3 5h18M3 12h18M3 19h18"/></svg>
+    </button>
+    <span class="brand">📖 <b>Enjoyable</b>Paper</span>
+    <span class="doc-title" id="docTitle"></span>
+  </div>
+  <div class="bar-center">
+    <button class="icon-btn" id="btnZoomOut" title="Zoom out (−)">−</button>
+    <span class="zoom-label" id="zoomLabel">100%</span>
+    <button class="icon-btn" id="btnZoomIn" title="Zoom in (+)">+</button>
+    <span class="page-jump">
+      <input type="number" id="pageInput" min="1" value="1" />
+      <span class="page-total" id="pageTotal">/ 0</span>
+    </span>
+  </div>
+  <div class="bar-right">
+    <span class="counts" id="exhibitCounts"></span>
+    <button class="icon-btn" id="btnTheme" title="Toggle light / dark (D)">🌙</button>
+    <button class="text-btn" id="btnOpenNew" title="Open another paper (O)">Open</button>
+  </div>
+</header>
+
+<!-- ===== Landing / drop zone ===== -->
+<main id="landing">
+  <div class="landing-inner">
+    <div class="hero-badge">for people who read economics papers</div>
+    <h1>Stop scrolling to the back of the&nbsp;PDF.</h1>
+    <p class="lede">
+      Most papers bury every figure and table at the end. <b>Enjoyable&nbsp;Paper</b> reads the
+      document, finds every exhibit, and links it to the text. Hover a
+      <span class="demo-ref">Figure&nbsp;3</span> or
+      <span class="demo-ref">Table&nbsp;2</span> and it appears right where you are.
+    </p>
+
+    <div id="dropzone" tabindex="0">
+      <div class="dz-icon">⬇︎</div>
+      <div class="dz-main">Drop a PDF here, or <span class="dz-link">choose a file</span></div>
+      <div class="dz-sub">Everything happens in your browser. Your paper is never uploaded.</div>
+      <input type="file" id="fileInput" accept="application/pdf" hidden />
+    </div>
+
+    <div class="landing-actions">
+      <button class="ghost-btn" id="btnDemo">▶ Try the live demo paper</button>
+      <span class="or">or</span>
+      <form id="urlForm" class="url-form">
+        <input type="url" id="urlInput" placeholder="Paste a PDF link (arXiv, NBER, SSRN…)" />
+        <button type="submit" class="ghost-btn">Load</button>
+      </form>
+    </div>
+
+    <ul class="feature-row">
+      <li><span class="fi">🔎</span><b>Inline previews</b><span>Hover or click any exhibit reference</span></li>
+      <li><span class="fi">🪟</span><b>Pin &amp; compare</b><span>Float multiple tables side-by-side</span></li>
+      <li><span class="fi">🗂️</span><b>Exhibit rail</b><span>Jump to any figure or table instantly</span></li>
+      <li><span class="fi">🔒</span><b>Fully private</b><span>100% local — no server, no upload</span></li>
+    </ul>
+    <div class="landing-foot">Free &amp; open source · works offline once loaded</div>
+  </div>
+</main>
+
+<!-- ===== Reader ===== -->
+<div id="reader" hidden>
+  <aside id="sidebar" hidden>
+    <div class="side-head">
+      <span>Exhibits</span>
+      <div class="side-filter" role="tablist">
+        <button class="chip active" data-filter="all">All</button>
+        <button class="chip" data-filter="figure">Figures</button>
+        <button class="chip" data-filter="table">Tables</button>
+      </div>
+    </div>
+    <div id="exhibitList" class="exhibit-list"></div>
+  </aside>
+  <div id="viewerScroll">
+    <div id="viewer"></div>
+  </div>
+</div>
+
+<!-- ===== Loading overlay ===== -->
+<div id="loadingOverlay" hidden>
+  <div class="spinner"></div>
+  <div class="load-text" id="loadText">Reading your paper…</div>
+  <div class="load-bar"><div class="load-bar-fill" id="loadFill"></div></div>
+</div>
+
+<!-- ===== Templates ===== -->
+<template id="pipTemplate">
+  <div class="pip" tabindex="0">
+    <div class="pip-head">
+      <span class="pip-title"></span>
+      <div class="pip-tools">
+        <button class="pip-btn pip-zoom-out" title="Smaller">−</button>
+        <button class="pip-btn pip-zoom-in" title="Bigger">+</button>
+        <button class="pip-btn pip-goto" title="Scroll the page to this exhibit">⤓</button>
+        <button class="pip-btn pip-pin" title="Keep this open while reading">📌</button>
+        <button class="pip-btn pip-close" title="Close (Esc)">✕</button>
+      </div>
+    </div>
+    <div class="pip-body"><div class="pip-canvas-wrap"></div></div>
+    <div class="pip-resize" title="Drag to resize"></div>
+  </div>
+</template>
+
+<div id="hoverCard" hidden><div class="hc-label"></div><div class="hc-canvas-wrap"></div><div class="hc-hint">click to pin · scroll to zoom</div></div>
+
+<div id="toast" hidden></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
