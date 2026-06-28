@@ -166,6 +166,8 @@ button{font-family:inherit;cursor:pointer}
 .exhibit-kind{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--accent-ink)}
 .exhibit-kind.table{color:#2f7d6b}
 [data-theme="dark"] .exhibit-kind.table{color:#5cc4ac}
+.exhibit-kind.equation{color:#5b54c9}
+[data-theme="dark"] .exhibit-kind.equation{color:#9a93ef}
 .exhibit-name{font-size:13px;font-weight:600;margin:1px 0 2px}
 .exhibit-cap{font-size:11.5px;color:var(--ink-faint);line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .exhibit-pg{font-size:10.5px;color:var(--ink-faint);margin-top:3px}

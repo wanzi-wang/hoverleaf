@@ -86,6 +86,14 @@ function kindOf(word) {
 function exhibitKey(kind, id) {
   return `${kind}-${normId(id)}`;
 }
+function kindLabel(kind) {
+  return kind === "table" ? "Table" : kind === "equation" ? "Equation" : "Figure";
+}
+function countKinds() {
+  const c = { figure: 0, table: 0, equation: 0 };
+  for (const ex of State.exhibits.values()) c[ex.kind] = (c[ex.kind] || 0) + 1;
+  return c;
+}
 
 /* =====================================================================
    STEP 1 — Build a geometric text model for one page
@@ -357,14 +365,16 @@ function detectExhibits() {
 // Each exhibit's siblings on the same page act as hard walls. Figures are framed
 // from their actual ink (images / vector paths); tables fall back to text geometry.
 async function computeRegions() {
-  const byPage = new Map();
+  const byPage = new Map(); // only figure/table captions act as walls
   for (const ex of State.exhibits.values()) {
+    if (ex.kind === "equation") continue;
     if (!byPage.has(ex.page)) byPage.set(ex.page, []);
     byPage.get(ex.page).push(ex.cap);
   }
   for (const ex of State.exhibits.values()) {
+    if (ex.kind === "equation") continue; // equation regions are computed at detection time
     const model = State.pageModel.get(ex.page);
-    const siblings = byPage.get(ex.page).filter((c) => c !== ex.cap);
+    const siblings = (byPage.get(ex.page) || []).filter((c) => c !== ex.cap);
     let region = null;
     if (ex.kind === "figure") {
       const graphics = await getPageGraphics(ex.page);
@@ -492,9 +502,83 @@ function regionXBand(cap, model) {
 }
 
 /* =====================================================================
+   STEP 2b — Numbered equations / specifications
+   A displayed equation ends with a right-aligned number, e.g.  …β₁xᵢ+εᵢ   (3).
+   We find the right-aligned "(N)" marker and crop the equation block to its left.
+   ===================================================================== */
+const MATH_RE = /[=≥≤≠±×÷·∑∏∫∈∉∀∃∞√∂∇βγδεζηθϑικλμνξπρςστυφχψω]/;
+
+function detectEquations() {
+  for (let p = 1; p <= State.numPages; p++) {
+    const model = State.pageModel.get(p);
+    if (!model) continue;
+    const W = model.wpt;
+    for (let li = 0; li < model.lines.length; li++) {
+      const line = model.lines[li];
+      const its = line.items;
+      if (!its.length) continue;
+      const cx = (its[0].x + its[its.length - 1].x + its[its.length - 1].w) / 2;
+      const col = (model.columns || [{ x0: 0, x1: W }]).find((c) => cx >= c.x0 && cx < c.x1) || { x0: 0, x1: W };
+      const last = its[its.length - 1];
+      if (last.x + last.w < col.x1 - 0.16 * W) continue;            // number not at the right margin
+
+      // the line ends with a right-aligned "(N)" …
+      const t = lineText(line);
+      const tm = t.match(/\((\d{1,3}[a-z]?|[A-Z]\.?\d{1,3}[a-z]?)\)\s*$/);
+      if (!tm) continue;
+      // … and it's a real equation (math content), not prose ending in "(3)"
+      const isMath = its.length === 1 || MATH_RE.test(t.slice(0, tm.index));
+      if (!isMath) continue;
+      if (isCaptionLine(t) || NOTE_RE.test(t)) continue;
+      if ((t.match(/\(\s*\d{1,3}[a-z]?\s*\)/g) || []).length > 1) continue; // "(1) (2) (3)" header row
+      const id = tm[1];
+      const key = `equation-${normId(id)}`;
+      if (State.exhibits.has(key)) continue;                        // first occurrence wins
+
+      const capLeft = Math.min(...its.map((i) => i.x)), capRight = Math.max(...its.map((i) => i.x + i.w));
+      State.exhibits.set(key, {
+        key, kind: "equation", id: normId(id), page: p, title: "",
+        cap: { top: line.y, bottom: line.y + line.h, left: capLeft, right: capRight },
+        region: equationRegion(line, model, col),
+      });
+    }
+  }
+  // re-sort the exhibit rail to include equations in document order
+  State.exhibitOrder = [...State.exhibits.keys()].sort((a, b) => {
+    const A = State.exhibits.get(a), B = State.exhibits.get(b);
+    return A.page - B.page || A.cap.top - B.cap.top;
+  });
+}
+
+// Crop band for an equation: the marker line plus any tightly-spaced rows above
+// (multi-line displays), full column width.
+function equationRegion(markerLine, model, col) {
+  const H = model.hpt, pad = H * 0.006, lh = markerLine.h || 10;
+  const colLines = model.lines
+    .filter((l) => { const cx = l.items.length ? (l.items[0].x + l.items[l.items.length - 1].x + l.items[l.items.length - 1].w) / 2 : -1; return cx >= col.x0 && cx < col.x1; })
+    .sort((a, b) => a.y - b.y);
+  const colW = col.x1 - col.x0;
+  // display equations are centred/indented; prose starts at the left text margin.
+  // A line that begins at the margin (and isn't tiny) bounds the equation block.
+  const isProse = (l) => {
+    const left = Math.min(...l.items.map((i) => i.x));
+    const lw = Math.max(...l.items.map((i) => i.x + i.w)) - left;
+    return left < model.content.left + colW * 0.08 && lw > colW * 0.4;
+  };
+  const idx = colLines.indexOf(markerLine);
+  let top = markerLine.y, bot = markerLine.y + markerLine.h;
+  for (let i = idx - 1; i >= 0 && idx - i <= 4; i--) { const gap = top - (colLines[i].y + colLines[i].h); if (gap > lh * 1.7 || isProse(colLines[i])) break; top = colLines[i].y; }
+  for (let i = idx + 1; i < colLines.length && i - idx <= 2; i++) { const gap = colLines[i].y - bot; if (gap > lh * 1.7 || isProse(colLines[i])) break; bot = colLines[i].y + colLines[i].h; }
+  top = clamp(top - pad - lh * 0.3, 0, H); bot = clamp(bot + pad, 0, H);
+  return { x: col.x0, y: top, w: col.x1 - col.x0, h: bot - top };
+}
+
+/* =====================================================================
    STEP 3 — In-text reference detection
    ===================================================================== */
 const REF_HEAD = /(figures?|figs?\.?|tables?|tabs?\.?)\s*\.?\s*([A-Za-z]{0,3}\.?\d+[A-Za-z]?)/gi;
+const EQ_HEAD = /(equations?|eqs?\.?|eqn\.?|expressions?|specifications?|specs?\.?)\s*\.?\s*\(?(\d{1,3}[a-z]?|[A-Z]\.?\d{1,3}[a-z]?)\)?/gi;
+const EQ_TAIL = /^(\s*(?:,|;|and|&|or)\s*(?:and\s*)?)\(?(\d{1,3}[a-z]?)\)?\b/i;
 const REF_TAIL = /^(\s*(?:,|;|and|&|or|to|through|–|—|-)\s*(?:and\s*)?)([A-Za-z]{0,3}\.?\d+[A-Za-z]?)\b/i;
 
 // Resolve a reference key to an exhibit, falling back from a panel id to its
@@ -593,6 +677,25 @@ function detectReferences() {
         cursor = tEnd;
       }
       REF_HEAD.lastIndex = Math.max(REF_HEAD.lastIndex, cursor);
+    }
+
+    // equation / specification references: "equation (3)", "Eq. 4", "specifications (1) and (2)"
+    EQ_HEAD.lastIndex = 0;
+    let e;
+    while ((e = EQ_HEAD.exec(text))) {
+      const idStart = e.index + e[0].length - e[2].length - (e[0].endsWith(")") ? 1 : 0);
+      const idEnd = e.index + e[0].length;
+      addRef(model, map, p, "equation", e[2], idStart, idEnd, e.index);
+      let cursor = idEnd, guard = 0;
+      while (guard++ < 12) {
+        const tail = text.slice(cursor).match(EQ_TAIL);
+        if (!tail) break;
+        const tStart = cursor + tail[1].length + (tail[0].slice(tail[1].length).startsWith("(") ? 1 : 0);
+        const tEnd = tStart + tail[2].length;
+        addRef(model, map, p, "equation", tail[2], tStart, tEnd, tStart);
+        cursor = cursor + tail[0].length;
+      }
+      EQ_HEAD.lastIndex = Math.max(EQ_HEAD.lastIndex, cursor);
     }
   }
 }
@@ -721,7 +824,7 @@ function buildLinkLayer(container, p, scale) {
     if (ref.page !== p) continue;
     const ex = resolveExhibit(ref.key);
     const label = ex
-      ? `Preview ${ex.kind === "table" ? "Table" : "Figure"} ${ex.id}${ex.title ? ", " + ex.title : ""}`
+      ? `Preview ${kindLabel(ex.kind)} ${ex.id}${ex.title ? ", " + ex.title : ""}`
       : `${ref.kind} ${ref.id} — caption not found`;
     for (const b of ref.boxes) {
       const a = document.createElement("div");
@@ -796,7 +899,7 @@ async function showHoverCard(anchor, key) {
   dismissCoach();
   hoverKey = key;
   $(".hc-label", hoverCard).textContent =
-    `${ex.kind === "table" ? "Table" : "Figure"} ${ex.id}${ex.title ? " · " + ex.title : ""}`;
+    `${kindLabel(ex.kind)} ${ex.id}${ex.title ? " · " + ex.title : ""}`;
   hoverCard.hidden = false;
   hoverCard.style.left = "-9999px";
   const w = Math.min(440, window.innerWidth * 0.6);
@@ -828,10 +931,10 @@ async function openPip(ex, x, y, opener) {
   tpl.dataset.key = ex.key;
   tpl.style.zIndex = ++pipZ;
   tpl.setAttribute("role", "dialog");
-  tpl.setAttribute("aria-label", `${ex.kind === "table" ? "Table" : "Figure"} ${ex.id} preview`);
+  tpl.setAttribute("aria-label", `${kindLabel(ex.kind)} ${ex.id} preview`);
   tpl._opener = opener || null;
   $(".pip-title", tpl).textContent =
-    `${ex.kind === "table" ? "Table" : "Figure"} ${ex.id} (p.${ex.page})`;
+    `${kindLabel(ex.kind)} ${ex.id} (p.${ex.page})`;
   document.body.appendChild(tpl);
   openPips.set(ex.key, tpl);
 
@@ -955,8 +1058,8 @@ function buildSidebar(filter = "all") {
     card.innerHTML = `
       <div class="exhibit-thumb" data-key="${key}"></div>
       <div class="exhibit-meta">
-        <div class="exhibit-kind ${ex.kind}">${ex.kind === "table" ? "Table" : "Figure"} ${ex.id}</div>
-        <div class="exhibit-cap">${ex.title ? escapeHtml(ex.title) : "<i>untitled</i>"}</div>
+        <div class="exhibit-kind ${ex.kind}">${kindLabel(ex.kind)} ${ex.id}</div>
+        <div class="exhibit-cap">${ex.title ? escapeHtml(ex.title) : (ex.kind === "equation" ? "numbered equation" : "<i>untitled</i>")}</div>
         <div class="exhibit-pg">page ${ex.page}</div>
       </div>`;
     card.onclick = () => { const r = card.getBoundingClientRect(); openPip(ex, r.right, r.top); scrollToExhibit(ex); };
@@ -990,8 +1093,9 @@ async function loadDocument(source, label) {
         setLoading(true, `Scanning page ${p} of ${State.numPages}…`, 0.32 + 0.5 * (p / State.numPages));
     }
 
-    setLoading(true, "Finding figures & tables…", 0.86);
+    setLoading(true, "Finding figures, tables & equations…", 0.86);
     detectExhibits();
+    detectEquations();
     await computeRegions();
     detectReferences();
     if (location.search.includes("debug")) window.__ep = { State, computeRegion, isCaptionLine, lineText, getPageGraphics, renderRegion };
@@ -1000,8 +1104,6 @@ async function loadDocument(source, label) {
     enterReader();
     setLoading(false);
 
-    const nF = State.exhibitOrder.filter((k) => State.exhibits.get(k).kind === "figure").length;
-    const nT = State.exhibitOrder.length - nF;
     let textItems = 0;
     for (const m of State.pageModel.values()) textItems += m.items.length;
     const hasText = textItems > State.numPages * 8; // ~real text layer vs. scanned
@@ -1009,8 +1111,14 @@ async function loadDocument(source, label) {
       toast(hasText
         ? "No figure/table captions matched here — you can still read the PDF, but inline previews aren't available for this one."
         : "This PDF has no text layer (it looks scanned), so figures and references can't be detected.", 6500);
-    else
-      toast(`Found ${nF} figure${nF !== 1 ? "s" : ""} and ${nT} table${nT !== 1 ? "s" : ""}. Hover any reference to preview.`, 4200);
+    else {
+      const c = countKinds();
+      const parts = [];
+      if (c.figure) parts.push(`${c.figure} figure${c.figure !== 1 ? "s" : ""}`);
+      if (c.table) parts.push(`${c.table} table${c.table !== 1 ? "s" : ""}`);
+      if (c.equation) parts.push(`${c.equation} equation${c.equation !== 1 ? "s" : ""}`);
+      toast(`Found ${parts.join(", ")}. Hover any reference to preview.`, 4200);
+    }
   } catch (err) {
     console.error(err);
     setLoading(false);
@@ -1060,9 +1168,10 @@ function enterReader() {
   $("#docTitle").textContent = State.filename;
   $("#pageTotal").textContent = `/ ${State.numPages}`;
   $("#pageInput").max = State.numPages;
-  const nF = State.exhibitOrder.filter((k) => State.exhibits.get(k).kind === "figure").length;
-  const nT = State.exhibitOrder.length - nF;
-  $("#exhibitCounts").textContent = `${nF} fig · ${nT} tab`;
+  const c = countKinds();
+  $("#exhibitCounts").textContent = [
+    c.figure && `${c.figure} fig`, c.table && `${c.table} tab`, c.equation && `${c.equation} eq`,
+  ].filter(Boolean).join(" · ");
   buildPagePlaceholders();
   buildSidebar("all");
   $("#sidebar").hidden = State.exhibitOrder.length === 0 || window.innerWidth <= 760;
