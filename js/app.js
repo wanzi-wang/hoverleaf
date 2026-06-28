@@ -21,7 +21,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL("./vendor/pdf.worker.min.mjs", 
  * Google Sheet — no GitHub or email needed from readers. Leave "" to fall
  * back to a GitHub-issue link.
  * -------------------------------------------------------------------- */
-const FEEDBACK_FORM_URL = "";
+const FEEDBACK_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScAPVg-qjV32YxxWKmfOfoTzXA50EHAL61vM2I8kpHZD5F7BA/viewform";
 const FEEDBACK_GITHUB = "https://github.com/wanzi-wang/enjoyable_paper/issues/new";
 
 const { Util } = pdfjsLib;
