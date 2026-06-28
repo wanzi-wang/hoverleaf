@@ -35,6 +35,7 @@ const State = {
   zoom: 1,
   baseWidthCss: 760,        // css width of a page at zoom 1
   filename: "",
+  pageGraphics: new Map(),  // pageNum -> [ink bounding boxes] (images + vector paths)
 };
 
 /* ------------------------------------------------------------------ *
@@ -150,6 +151,68 @@ function detectColumns(items, W) {
 }
 
 /* =====================================================================
+   STEP 1b — Ink boxes (images + vector paths)
+   Figures are usually drawn as images / vector paths that the text layer can't
+   see. We walk the page's draw operations and record the bounding box of every
+   image and stroked/filled path (in scale-1 viewport coords). This is what lets
+   us frame a figure precisely instead of guessing from surrounding text.
+   ===================================================================== */
+async function getPageGraphics(pageNum) {
+  if (State.pageGraphics.has(pageNum)) return State.pageGraphics.get(pageNum);
+  const page = await getPage(pageNum);
+  const vp = page.getViewport({ scale: 1 });
+  const OPS = pdfjsLib.OPS, T = Util.transform, A = Util.applyTransform;
+  let opList;
+  try { opList = await page.getOperatorList(); }
+  catch { State.pageGraphics.set(pageNum, []); return []; }
+
+  const fn = opList.fnArray, ar = opList.argsArray;
+  const boxes = [];
+  let ctm = [1, 0, 0, 1, 0, 0];
+  const stack = [];
+  let path = null;
+  const toView = (x, y) => A(A([x, y], ctm), vp.transform); // PDF space -> viewport(scale 1)
+  const addPts = (pts) => {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [x, y] of pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    return { x0, y0, x1, y1 };
+  };
+
+  for (let i = 0; i < fn.length; i++) {
+    const f = fn[i];
+    if (f === OPS.save) stack.push(ctm);
+    else if (f === OPS.restore) ctm = stack.pop() || [1, 0, 0, 1, 0, 0];
+    else if (f === OPS.transform) ctm = T(ctm, ar[i]);
+    else if (f === OPS.paintFormXObjectBegin) { stack.push(ctm); if (ar[i] && ar[i][0]) ctm = T(ctm, ar[i][0]); }
+    else if (f === OPS.paintFormXObjectEnd) ctm = stack.pop() || [1, 0, 0, 1, 0, 0];
+    else if (f === OPS.paintImageXObject || f === OPS.paintImageMaskXObject ||
+             f === OPS.paintInlineImageXObject || f === OPS.paintJpegXObject) {
+      boxes.push(addPts([[0, 0], [1, 0], [0, 1], [1, 1]].map(([x, y]) => toView(x, y))));
+    } else if (f === OPS.constructPath) {
+      const coords = ar[i] && ar[i][1];
+      if (coords && coords.length >= 2) {
+        const pts = [];
+        for (let j = 0; j + 1 < coords.length; j += 2) pts.push(toView(coords[j], coords[j + 1]));
+        const b = addPts(pts);
+        path = path ? addPts([[path.x0, path.y0], [path.x1, path.y1], [b.x0, b.y0], [b.x1, b.y1]]) : b;
+      }
+    } else if (f === OPS.fill || f === OPS.eoFill || f === OPS.stroke || f === OPS.fillStroke ||
+               f === OPS.eoFillStroke || f === OPS.closeFillStroke || f === OPS.closeStroke || f === OPS.endPath) {
+      if (path) { boxes.push(path); path = null; }
+    }
+  }
+
+  // drop noise (hairlines, dots) and page-filling backgrounds
+  const area = vp.width * vp.height;
+  const filt = boxes.filter((b) => {
+    const w = b.x1 - b.x0, h = b.y1 - b.y0, a = w * h;
+    return w > 3 && h > 3 && a > area * 0.0006 && a < area * 0.93;
+  });
+  State.pageGraphics.set(pageNum, filt);
+  return filt;
+}
+
+/* =====================================================================
    STEP 2 — Caption / exhibit detection
    ===================================================================== */
 const CAPTION_RE =
@@ -231,18 +294,73 @@ function detectExhibits() {
     return A.page - B.page || A.cap.top - B.cap.top;
   });
 
-  // Second pass: now that EVERY caption is known, compute crop regions using all
-  // other exhibits' captions on the page as hard walls. This is robust even when
-  // a neighbour caption was missed by the line-level re-scan inside computeRegion.
+}
+
+// Second pass (async): now that every caption is known, compute crop regions.
+// Each exhibit's siblings on the same page act as hard walls. Figures are framed
+// from their actual ink (images / vector paths); tables fall back to text geometry.
+async function computeRegions() {
   const byPage = new Map();
   for (const ex of State.exhibits.values()) {
     if (!byPage.has(ex.page)) byPage.set(ex.page, []);
     byPage.get(ex.page).push(ex.cap);
   }
   for (const ex of State.exhibits.values()) {
-    const others = byPage.get(ex.page).filter((c) => c !== ex.cap);
-    ex.region = computeRegion(ex.kind, ex.cap, State.pageModel.get(ex.page), others);
+    const model = State.pageModel.get(ex.page);
+    const siblings = byPage.get(ex.page).filter((c) => c !== ex.cap);
+    let region = null;
+    if (ex.kind === "figure") {
+      const graphics = await getPageGraphics(ex.page);
+      region = regionFromGraphics(ex.cap, model, siblings, graphics);
+    }
+    ex.region = region || computeRegion(ex.kind, ex.cap, model, siblings);
   }
+}
+
+// Frame a figure from its ink. The figure's graphic sits on ONE side of the
+// caption (usually above). We bound each side by the nearest neighbouring
+// caption/note, then take whichever side actually holds the ink — so two figures
+// stacked on one page don't swallow each other's graphic.
+function regionFromGraphics(cap, model, siblings, graphics) {
+  if (!graphics || !graphics.length) return null;
+  const H = model.hpt, W = model.wpt, pad = H * 0.012;
+  const band = regionXBand(cap, model);
+  const inBandX = (x) => x >= band.x - 2 && x <= band.x + band.w + 2;
+
+  // nearest neighbouring exhibit caption / Notes line on each side
+  let above = 0, below = H;
+  for (const s of siblings) {
+    if (!inBandX((s.left + s.right) / 2)) continue;
+    if (s.bottom <= cap.top + 1) above = Math.max(above, s.bottom);
+    else if (s.top >= cap.bottom - 1) below = Math.min(below, s.top);
+  }
+  for (const line of model.lines) {
+    if (!NOTE_RE.test(lineText(line))) continue;
+    const top = line.y, bot = line.y + line.h;
+    if (bot > cap.top - 1 && top < cap.bottom + 1) continue;
+    if (bot <= cap.top + 1) above = Math.max(above, bot);
+    else if (top >= cap.bottom - 1) below = Math.min(below, top);
+  }
+
+  // ink fully above the caption (down to the previous neighbour) vs fully below
+  const aboveInk = graphics.filter((b) => inBandX((b.x0 + b.x1) / 2) && b.y1 <= cap.top + 2 && b.y0 >= above - 1);
+  const belowInk = graphics.filter((b) => inBandX((b.x0 + b.x1) / 2) && b.y0 >= cap.bottom - 2 && b.y1 <= below + 1);
+  const area = (arr) => arr.reduce((s, b) => s + (b.x1 - b.x0) * (b.y1 - b.y0), 0);
+  const useAbove = area(aboveInk) >= area(belowInk);
+  const mine = useAbove ? aboveInk : belowInk;
+  if (!mine.length) return null;
+
+  const gx0 = Math.min(...mine.map((b) => b.x0)), gx1 = Math.max(...mine.map((b) => b.x1));
+  const gy0 = Math.min(...mine.map((b) => b.y0)), gy1 = Math.max(...mine.map((b) => b.y1));
+  // extend toward the graphic only; keep a thin margin on the caption's far side
+  let y0 = useAbove ? Math.min(cap.top, gy0) - pad : cap.top - pad;
+  let y1 = useAbove ? cap.bottom + pad : Math.max(cap.bottom, gy1) + pad;
+  y0 = clamp(y0, above === 0 ? 0 : above + pad, H);
+  y1 = clamp(y1, 0, below === H ? H : below - pad);
+  const x0 = clamp(Math.min(cap.left, gx0) - pad, 0, W);
+  const x1 = clamp(Math.max(cap.right, gx1) + pad, 0, W);
+  if (y1 - y0 < H * 0.04 || x1 - x0 < W * 0.1) return null; // implausible → fall back
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
 
 // Region (in scale-1 page coords) we crop for a preview. Figures put their
@@ -816,8 +934,9 @@ async function loadDocument(source, label) {
 
     setLoading(true, "Finding figures & tables…", 0.86);
     detectExhibits();
+    await computeRegions();
     detectReferences();
-    if (location.search.includes("debug")) window.__ep = { State, computeRegion, isCaptionLine, lineText };
+    if (location.search.includes("debug")) window.__ep = { State, computeRegion, isCaptionLine, lineText, getPageGraphics, renderRegion };
 
     setLoading(true, "Laying out…", 0.95);
     enterReader();
