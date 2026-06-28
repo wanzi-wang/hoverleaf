@@ -90,11 +90,38 @@ function exhibitKey(kind, id) {
 /* =====================================================================
    STEP 1 — Build a geometric text model for one page
    ===================================================================== */
+// Median angle (deg) of the text on a page under a given viewport. ~0 means the
+// text reads horizontally; ~±90 means the page content is sideways (landscape
+// tables typeset with LaTeX \begin{landscape}, very common in economics).
+function medianTextAngle(items, vp) {
+  const angs = [];
+  for (const it of items) {
+    if (!it.str || it.str.trim().length < 2) continue;
+    const tx = Util.transform(vp.transform, it.transform);
+    angs.push(Math.atan2(tx[1], tx[0]) * 180 / Math.PI);
+    if (angs.length >= 240) break;
+  }
+  if (!angs.length) return 0;
+  angs.sort((a, b) => a - b);
+  return angs[angs.length >> 1];
+}
+
 async function buildPageModel(pageNum) {
   if (State.pageModel.has(pageNum)) return State.pageModel.get(pageNum);
   const page = await getPage(pageNum);
-  const vp = page.getViewport({ scale: 1 });
   const tc = await page.getTextContent();
+
+  // Normalise rotation: choose the viewport rotation that makes text horizontal,
+  // so every downstream step (lines, captions, regions, rendering) sees an
+  // upright page — and sideways tables preview the right way up.
+  let rotation = 0;
+  let vp = page.getViewport({ scale: 1 });
+  if (Math.abs(medianTextAngle(tc.items, vp)) > 30) {
+    for (const r of [90, 270, 180]) {
+      const vpr = page.getViewport({ scale: 1, rotation: r });
+      if (Math.abs(medianTextAngle(tc.items, vpr)) < 15) { rotation = r; vp = vpr; break; }
+    }
+  }
 
   const items = [];
   let cTop = Infinity, cBottom = -Infinity, cLeft = Infinity, cRight = -Infinity;
@@ -117,7 +144,8 @@ async function buildPageModel(pageNum) {
   // left-column line and a right-column line at the same height don't merge
   // into one garbled "line" (which would wreck caption + reference detection
   // on AER/QJE-style published papers).
-  const columns = detectColumns(items, vp.width);
+  // a rotated (landscape) page is a single full-width exhibit, never 2-column text
+  const columns = rotation ? [{ x0: 0, x1: vp.width }] : detectColumns(items, vp.width);
   const lines = [];
   columns.forEach((col, ci) => {
     const colItems = items.filter((it) => {
@@ -140,7 +168,7 @@ async function buildPageModel(pageNum) {
   for (const ln of lines) ln.items.sort((a, b) => a.x - b.x);
 
   const model = {
-    wpt: vp.width, hpt: vp.height, items, lines, columns,
+    wpt: vp.width, hpt: vp.height, items, lines, columns, rotation,
     content: { top: cTop, bottom: cBottom, left: cLeft, right: cRight },
   };
   State.pageModel.set(pageNum, model);
@@ -177,7 +205,8 @@ function detectColumns(items, W) {
 async function getPageGraphics(pageNum) {
   if (State.pageGraphics.has(pageNum)) return State.pageGraphics.get(pageNum);
   const page = await getPage(pageNum);
-  const vp = page.getViewport({ scale: 1 });
+  const rotation = (State.pageModel.get(pageNum) || {}).rotation || 0;
+  const vp = page.getViewport({ scale: 1, rotation });
   const OPS = pdfjsLib.OPS, T = Util.transform, A = Util.applyTransform;
   let opList;
   try { opList = await page.getOperatorList(); }
@@ -248,28 +277,27 @@ function lineText(line) {
 }
 
 // Score how caption-like the text after a "Figure N" / "Table N" label is.
-// A real back-of-paper caption ("Table 2—Effect of X") scores high; an in-text
-// sentence that merely starts a wrapped line ("Figure 2. Heterogeneity is…")
-// scores low and is rejected. Returns {score, title}.
-function scoreCaption(rest) {
+// The decisive signal is what immediately follows the number:
+//   "Table 2—Effect…" / "Figure 1a. Animal herds graze…"  → caption (terminator + Title)
+//   "TABLE 1" alone on a line (Econometrica/AER style)     → caption (bare label)
+//   "Figure 3 shows…" / "Figure 2, which…"                 → prose (lowercase word / comma)
+// Returns {score, title}.
+function scoreCaption(rest, labelWord) {
   const r = rest.replace(/^\s+/, "");
-  const sep = r[0] || "";
+  const c0 = r[0] || "";
+  const allCaps = /^(TABLE|FIGURE|FIG|TAB)\.?$/.test(labelWord); // journal-style caps label
   let score = 0;
-  if (sep === ":" || sep === "—" || sep === "–") score += 4;       // strong caption markers
-  else if (sep === "") score += 2;                                   // bare "Figure 3" line
-  else if (sep === "." || sep === ")" || sep === "-") score += 1;
-  else if (/^[A-Z(]/.test(r)) score += 1;                            // "Figure 3 Title Case…"
-  else return { score: -10, title: "" };                             // lowercase/garbage → not a caption
+  if (c0 === "") score += allCaps ? 5 : 3;                          // bare label on its own line
+  else if (c0 === ":" || c0 === "—" || c0 === "–") score += 4;      // strong caption markers
+  else if (c0 === "." || c0 === ")")                               // label terminator …
+    score += /^[.)]\s*([A-Z(]|$)/.test(r) ? 3 : 1;                 // … if followed by a Title or end
+  else if (/^[A-Z(]/.test(c0)) score += allCaps ? 3 : 1;           // "Figure 1 Title" / "TABLE 2Continued"
+  else return { score: -10, title: "" };                           // comma / lowercase word → prose
+  if (allCaps) score += 1;                                          // all-caps label is a strong signal
 
   const title = r.replace(/^[\s:.—–)\-]+/, "").trim();
-  const wc = title.split(/\s+/).filter(Boolean).length;
-  if (wc > 0 && wc <= 12) score += 1;
-  if (wc > 16) score -= 3;                                           // long → it's a sentence
-  // a finite verb only signals prose in a longer run; short Title-Case captions
-  // like "Treatment effects are larger in rural areas" stay valid
-  if (wc > 6 && /\b(is|are|was|were|be|been|shows?|reports?|presents?|displays?|summari[sz]ed|documented|provides?|reveals?|suggests?|indicates?|implies?|we|our|this|these|which|that)\b/i.test(title))
-    score -= 4;
-  if (/\b(figures?|figs?\.?|tables?|tabs?\.?|panels?)\s*\.?\s*\d/i.test(title)) score -= 3; // cites another exhibit
+  // citing another exhibit hints at prose, but only override a weak score
+  if (score < 5 && /\b(figures?|figs?\.?|tables?|tabs?\.?|panels?)\s*\.?\s*\d/i.test(title)) score -= 3;
   if (/^[A-Z]/.test(title)) score += 1;
   return { score, title: title.slice(0, 140) };
 }
@@ -277,7 +305,7 @@ function scoreCaption(rest) {
 function isCaptionLine(txt) {
   const m = txt.match(CAPTION_RE);
   if (!m) return null;
-  const { score, title } = scoreCaption(m[3]);
+  const { score, title } = scoreCaption(m[3], m[1]);
   if (score < CAP_THRESHOLD) return null;
   return { kind: kindOf(m[1]), id: m[2], title, score };
 }
@@ -290,18 +318,30 @@ function detectExhibits() {
   for (let p = 1; p <= State.numPages; p++) {
     const model = State.pageModel.get(p);
     if (!model) continue;
-    for (const line of model.lines) {
+    for (let li = 0; li < model.lines.length; li++) {
+      const line = model.lines[li];
       const hit = isCaptionLine(lineText(line));
       if (!hit) continue;
       const key = exhibitKey(hit.kind, hit.id);
       const capLeft = Math.min(...line.items.map((i) => i.x));
       const capRight = Math.max(...line.items.map((i) => i.x + i.w));
       const cap = { top: line.y, bottom: line.y + line.h, left: capLeft, right: capRight };
+      // pick a human title: the same-line text if it reads like prose, else the
+      // next line (Econometrica-style "TABLE 1" with the title beneath it)
+      const titleOk = (t) => !!t && /^[A-Za-z]/.test(t) && t.replace(/[^A-Za-z]/g, "").length / t.length > 0.45;
+      let title = titleOk(hit.title) ? hit.title : "";
+      if (!title) {
+        const next = model.lines[li + 1];
+        if (next && next.col === line.col && next.y - line.y < line.h * 2.4) {
+          const nt = lineText(next).trim();
+          if (titleOk(nt) && !isCaptionLine(nt) && !NOTE_RE.test(nt)) title = nt.slice(0, 140);
+        }
+      }
       // bias slightly toward later pages (exhibits usually live at the back)
       const score = hit.score + p / Math.max(1, State.numPages);
       const prev = candidates.get(key);
       if (prev && prev.score >= score) continue;
-      candidates.set(key, { key, kind: hit.kind, id: normId(hit.id), page: p, cap, title: hit.title, score });
+      candidates.set(key, { key, kind: hit.kind, id: normId(hit.id), page: p, cap, title, score });
     }
   }
 
@@ -630,7 +670,7 @@ async function renderPage(p) {
   const model = State.pageModel.get(p);
   const scale = renderScale();
   const dpr = maxDPR();
-  const vp = page.getViewport({ scale: scale * dpr });
+  const vp = page.getViewport({ scale: scale * dpr, rotation: model.rotation || 0 });
 
   const canvas = document.createElement("canvas");
   canvas.width = vp.width;
@@ -708,7 +748,8 @@ async function renderRegion(targetWrap, ex, cssWidth) {
   const region = ex.region;
   const dpr = maxDPR();
   const scale = cssWidth / region.w;
-  const vp = page.getViewport({ scale: scale * dpr });
+  const rotation = (State.pageModel.get(ex.page) || {}).rotation || 0;
+  const vp = page.getViewport({ scale: scale * dpr, rotation });
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(region.w * scale * dpr));
   canvas.height = Math.max(1, Math.round(region.h * scale * dpr));
@@ -961,8 +1002,13 @@ async function loadDocument(source, label) {
 
     const nF = State.exhibitOrder.filter((k) => State.exhibits.get(k).kind === "figure").length;
     const nT = State.exhibitOrder.length - nF;
+    let textItems = 0;
+    for (const m of State.pageModel.values()) textItems += m.items.length;
+    const hasText = textItems > State.numPages * 8; // ~real text layer vs. scanned
     if (!State.exhibitOrder.length)
-      toast("No figures or tables detected — this PDF may be scanned images (no text layer).", 5000);
+      toast(hasText
+        ? "No figure/table captions matched here — you can still read the PDF, but inline previews aren't available for this one."
+        : "This PDF has no text layer (it looks scanned), so figures and references can't be detected.", 6500);
     else
       toast(`Found ${nF} figure${nF !== 1 ? "s" : ""} and ${nT} table${nT !== 1 ? "s" : ""}. Hover any reference to preview.`, 4200);
   } catch (err) {
