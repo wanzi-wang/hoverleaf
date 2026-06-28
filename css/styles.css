@@ -3,36 +3,38 @@
    A calm reading surface with floating exhibit previews.
    =========================================================== */
 :root{
-  --bg:#f4f1ea;            /* warm paper */
-  --bg-elev:#fffdf8;
-  --ink:#23211c;
-  --ink-soft:#5c574c;
-  --ink-faint:#8a8377;
-  --line:#e3ddcf;
-  --line-strong:#d2c9b5;
+  --bg:#ffffff;            /* clean white */
+  --bg-elev:#ffffff;
+  --bg-sunken:#f7f8fa;     /* viewer canvas backdrop, so white pages stand out */
+  --ink:#1d1d1f;
+  --ink-soft:#55585f;
+  --ink-faint:#888b92;
+  --line:#eaeaec;
+  --line-strong:#d8d9dd;
   --accent:#b4531f;        /* terracotta (decorative) */
-  --accent-soft:#f0d9c7;
-  --accent-ink:#7e3a14;
-  --link:#8a3d12;          /* text/links — AA contrast on warm paper */
-  --link-bg:rgba(180,83,31,.15);
-  --link-bg-hot:rgba(180,83,31,.30);
-  --shadow:0 6px 24px rgba(40,30,15,.14), 0 1px 2px rgba(40,30,15,.10);
-  --shadow-lg:0 18px 60px rgba(30,20,8,.30);
+  --accent-soft:#fbeadf;
+  --accent-ink:#9a3d10;
+  --link:#9a3d10;          /* text/links — AA contrast on white */
+  --link-bg:rgba(180,83,31,.12);
+  --link-bg-hot:rgba(180,83,31,.24);
+  --shadow:0 6px 24px rgba(20,20,30,.10), 0 1px 2px rgba(20,20,30,.06);
+  --shadow-lg:0 18px 60px rgba(15,15,25,.22);
   --radius:14px;
-  --canvas-shadow:0 2px 16px rgba(40,30,15,.12);
+  --canvas-shadow:0 1px 3px rgba(0,0,0,.10), 0 6px 22px rgba(0,0,0,.07);
   --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
 }
 [data-theme="dark"]{
-  --bg:#1a1916;
-  --bg-elev:#242219;
-  --ink:#ece7da;
-  --ink-soft:#b3ad9d;
-  --ink-faint:#807a6b;
-  --line:#34322a;
-  --line-strong:#46433a;
+  --bg:#17181b;
+  --bg-elev:#1f2023;
+  --bg-sunken:#0f1012;
+  --ink:#e9eaed;
+  --ink-soft:#a8abb2;
+  --ink-faint:#74777e;
+  --line:#2c2e33;
+  --line-strong:#3d4046;
   --accent:#e08544;
-  --accent-soft:#3a2a1c;
+  --accent-soft:#33271d;
   --accent-ink:#f0b483;
   --link:#e8a064;
   --link-bg:rgba(224,133,68,.16);
@@ -122,7 +124,7 @@ button{font-family:inherit;cursor:pointer}
 .url-form{display:flex;gap:6px}
 #urlInput{width:min(46vw,320px);padding:9px 12px;border:1px solid var(--line-strong);border-radius:9px;background:var(--bg-elev);color:var(--ink);font-size:14px}
 .feature-row{list-style:none;display:grid;grid-template-columns:repeat(4,1fr);gap:14px;padding:0;margin:40px 0 0;text-align:left}
-.feature-row li{display:flex;flex-direction:column;gap:3px;background:var(--bg-elev);border:1px solid var(--line);border-radius:12px;padding:14px}
+.feature-row li{display:flex;flex-direction:column;gap:3px;background:var(--bg-sunken);border:1px solid var(--line);border-radius:12px;padding:14px}
 .feature-row .fi{font-size:20px}
 .feature-row b{font-size:14px}
 .feature-row span:last-child{font-size:12px;color:var(--ink-faint);line-height:1.4}
@@ -145,7 +147,7 @@ button{font-family:inherit;cursor:pointer}
 .exhibit-list{overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:7px}
 .exhibit-card{
   display:flex;gap:10px;align-items:flex-start;text-align:left;
-  border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:8px;transition:.15s;
+  border:1px solid var(--line);background:var(--bg-sunken);border-radius:10px;padding:8px;transition:.15s;
 }
 .exhibit-card:hover{border-color:var(--accent);transform:translateX(2px);box-shadow:var(--shadow)}
 .exhibit-thumb{width:64px;height:48px;flex:0 0 64px;border-radius:6px;overflow:hidden;background:var(--bg-elev);border:1px solid var(--line);display:flex;align-items:center;justify-content:center}
@@ -159,9 +161,9 @@ button{font-family:inherit;cursor:pointer}
 .exhibit-pg{font-size:10.5px;color:var(--ink-faint);margin-top:3px}
 
 /* ===================== Viewer ===================== */
-#viewerScroll{flex:1;overflow:auto;scroll-behavior:smooth;background:var(--bg);position:relative}
+#viewerScroll{flex:1;overflow:auto;scroll-behavior:smooth;background:var(--bg-sunken);position:relative}
 #viewer{padding:26px 0 60px;display:flex;flex-direction:column;align-items:center;gap:18px}
-.page{position:relative;box-shadow:var(--canvas-shadow);border-radius:3px;background:#fff;overflow:hidden}
+.page{position:relative;box-shadow:var(--canvas-shadow);border-radius:3px;background:#fff;overflow:hidden;border:1px solid var(--line)}
 .page canvas{display:block}
 .page.flash{animation:flash 1.3s ease}
 @keyframes flash{0%,100%{box-shadow:var(--canvas-shadow)}25%{box-shadow:0 0 0 4px var(--accent),var(--shadow)}}
