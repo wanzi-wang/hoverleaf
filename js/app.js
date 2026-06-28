@@ -69,6 +69,14 @@ async function getPage(n) {
   State.pageCache.set(n, p);
   return p;
 }
+// Pixel-density cap for canvas backing stores. Phones / low-memory devices get
+// a gentler cap so a big PDF page doesn't allocate a huge bitmap and crash.
+function maxDPR() {
+  const dpr = window.devicePixelRatio || 1;
+  const small = Math.min(screen.width || 9999, screen.height || 9999) <= 820;
+  const lowMem = (navigator.deviceMemory || 8) <= 4;
+  return Math.min(dpr, small || lowMem ? 2 : 2.5);
+}
 function normId(raw) {
   return raw.replace(/\./g, "").toUpperCase(); // "A.1" -> "A1", "3a" -> "3A"
 }
@@ -621,7 +629,7 @@ async function renderPage(p) {
   const page = await getPage(p);
   const model = State.pageModel.get(p);
   const scale = renderScale();
-  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  const dpr = maxDPR();
   const vp = page.getViewport({ scale: scale * dpr });
 
   const canvas = document.createElement("canvas");
@@ -698,7 +706,7 @@ function buildLinkLayer(container, p, scale) {
 async function renderRegion(targetWrap, ex, cssWidth) {
   const page = await getPage(ex.page);
   const region = ex.region;
-  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  const dpr = maxDPR();
   const scale = cssWidth / region.w;
   const vp = page.getViewport({ scale: scale * dpr });
   const canvas = document.createElement("canvas");
@@ -1179,3 +1187,5 @@ function bootFromQuery() {
 
 wireUI();
 bootFromQuery();
+// signal a successful start so the HTML fallback banner stays hidden
+window.__hoverleafReady = true;

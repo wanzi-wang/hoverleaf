@@ -2,13 +2,36 @@
 <html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Hoverleaf · read econ papers without the scroll-back</title>
-<meta name="description" content="A calmer way to read economics papers. Hover any 'Figure 3' or 'Table 2' and see it instantly — no more flipping to the back of the PDF." />
+<meta name="description" content="Read economics papers without scrolling to the back. Hover any 'Figure 3' or 'Table 2' and see the figure or table instantly. 100% in your browser — private, free, no upload." />
+<meta name="author" content="wanzi-wang" />
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#17181b" media="(prefers-color-scheme: dark)" />
+<meta name="color-scheme" content="light dark" />
+<link rel="canonical" href="https://wanzi-wang.github.io/hoverleaf/" />
+<!-- Open Graph / social cards -->
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Hoverleaf" />
+<meta property="og:title" content="Hoverleaf — read econ papers without the scroll-back" />
+<meta property="og:description" content="Hover any 'Figure 3' or 'Table 2' in a PDF and see it inline. No more flipping to the back of the paper. Private, in-browser, free." />
+<meta property="og:url" content="https://wanzi-wang.github.io/hoverleaf/" />
+<meta property="og:image" content="https://wanzi-wang.github.io/hoverleaf/assets/screenshot.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Hoverleaf — read econ papers without the scroll-back" />
+<meta name="twitter:description" content="Hover any 'Figure 3' or 'Table 2' in a PDF and see it inline. Private, in-browser, free." />
+<meta name="twitter:image" content="https://wanzi-wang.github.io/hoverleaf/assets/screenshot.png" />
 <link rel="stylesheet" href="css/styles.css" />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8D%83%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
+<!-- Fallback for browsers that can't run the app (no ES modules / JS off / load failure) -->
+<noscript><div class="compat-banner">Hoverleaf needs JavaScript to read PDFs in your browser. Please enable JavaScript, or open this page in a recent version of Chrome, Safari, Firefox, or Edge.</div></noscript>
+<div id="compat" class="compat-banner" hidden>
+  Hoverleaf couldn’t start — your browser may be out of date. Please update to the latest
+  <b>Chrome</b>, <b>Safari</b>, <b>Firefox</b>, or <b>Edge</b> (desktop or mobile) and reload.
+</div>
+
 <!-- ===== Top bar ===== -->
 <header id="topbar" hidden>
   <div class="bar-left">
@@ -136,6 +159,10 @@
 
 <div id="toast" hidden role="status" aria-live="polite"></div>
 
+<!-- old browsers without ES-module support run this and skip the module below -->
+<script nomodule>document.getElementById('compat').hidden=false;</script>
+<!-- if the module never signals ready (load/worker failure), surface the fallback -->
+<script>setTimeout(function(){if(!window.__hoverleafReady){document.getElementById('compat').hidden=false;}},9000);</script>
 <script type="module" src="js/app.js"></script>
 </body>
 </html>
