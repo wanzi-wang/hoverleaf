@@ -29,6 +29,7 @@
   </div>
   <div class="bar-right">
     <span class="counts" id="exhibitCounts"></span>
+    <button class="icon-btn" id="btnFeedback" title="Share feedback">💬</button>
     <button class="icon-btn" id="btnTheme" title="Toggle light / dark (D)">🌙</button>
     <button class="text-btn" id="btnOpenNew" title="Open another paper (O)">Open</button>
   </div>
@@ -68,7 +69,7 @@
       <li><span class="fi">🗂️</span><b>Exhibit rail</b><span>Jump to any figure or table instantly</span></li>
       <li><span class="fi">🔒</span><b>Fully private</b><span>100% local — no server, no upload</span></li>
     </ul>
-    <div class="landing-foot">Free &amp; open source · works offline once loaded</div>
+    <div class="landing-foot">Free &amp; open source · works offline once loaded · <button class="link-btn" id="btnFeedback2">share feedback</button></div>
   </div>
 </main>
 
@@ -121,6 +122,16 @@
   <span class="coach-arrow"></span>
   <div>Tip: hover (or <b>Tab</b> + <b>Enter</b>) any underlined <b>Figure</b> / <b>Table</b> reference to preview it here — no scrolling to the back.</div>
   <button class="coach-dismiss" id="coachDismiss">Got it</button>
+</div>
+
+<div id="fbModal" hidden role="dialog" aria-modal="true" aria-label="Share feedback">
+  <div class="modal-backdrop" data-fbclose></div>
+  <div class="modal-card">
+    <button class="modal-x" data-fbclose title="Close (Esc)" aria-label="Close">✕</button>
+    <h3 class="modal-title">Share your thoughts 💬</h3>
+    <p class="modal-sub">A bug, an idea, or just a reaction — I read everything. Anonymous, nothing tracked.</p>
+    <div id="fbBody"></div>
+  </div>
 </div>
 
 <div id="toast" hidden role="status" aria-live="polite"></div>

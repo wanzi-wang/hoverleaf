@@ -15,6 +15,15 @@ import * as pdfjsLib from "./vendor/pdf.min.mjs";
 // (not even which URL you opened) is sent to any third party.
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL("./vendor/pdf.worker.min.mjs", import.meta.url).href;
 
+/* ----------------------------------------------------------------------
+ * Feedback: paste your Google Form's share link below (the ".../viewform"
+ * URL from the form's "Send" → link button). Responses land in your own
+ * Google Sheet — no GitHub or email needed from readers. Leave "" to fall
+ * back to a GitHub-issue link.
+ * -------------------------------------------------------------------- */
+const FEEDBACK_FORM_URL = "";
+const FEEDBACK_GITHUB = "https://github.com/wanzi-wang/enjoyable_paper/issues/new";
+
 const { Util } = pdfjsLib;
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -1099,10 +1108,13 @@ function wireUI() {
   // keyboard
   $("#coachDismiss").onclick = dismissCoach;
   $("#btnHome").onclick = goHome;
+  $("#btnFeedback").onclick = openFeedback;
+  $("#btnFeedback2").onclick = openFeedback;
+  $$("[data-fbclose]").forEach((el) => (el.onclick = closeFeedback));
 
   document.addEventListener("keydown", (e) => {
     if (e.target.matches("input")) return;
-    if (e.key === "Escape") { if (openPips.size) closeAllPips(true); else { hideHoverCard(); dismissCoach(); } }
+    if (e.key === "Escape") { if (!$("#fbModal").hidden) closeFeedback(); else if (openPips.size) closeAllPips(true); else { hideHoverCard(); dismissCoach(); } }
     else if (e.key === "d" || e.key === "D") $("#btnTheme").click();
     else if (e.key === "f" || e.key === "F") $("#btnSidebar").click();
     else if (e.key === "o" || e.key === "O") fileInput.click();
@@ -1128,6 +1140,22 @@ function resetState() {
   State.pageEls.clear();
   $("#viewer").innerHTML = "";
 }
+
+// Feedback modal — embeds your Google Form (or links to GitHub issues).
+function openFeedback() {
+  const body = $("#fbBody");
+  if (!body.dataset.loaded) {
+    if (FEEDBACK_FORM_URL) {
+      const src = FEEDBACK_FORM_URL.replace(/\/viewform.*$/, "/viewform") + "?embedded=true";
+      body.innerHTML = `<iframe class="fb-frame" src="${src}" title="Feedback form" loading="lazy">Loading…</iframe>`;
+    } else {
+      body.innerHTML = `<div class="fb-soon">A feedback form is being set up here.<br>In the meantime, you can <a href="${FEEDBACK_GITHUB}" target="_blank" rel="noopener">open an issue on GitHub</a> — thank you!</div>`;
+    }
+    body.dataset.loaded = "1";
+  }
+  $("#fbModal").hidden = false;
+}
+function closeFeedback() { $("#fbModal").hidden = true; }
 
 // Return to the landing page (e.g. clicking the brand).
 function goHome() {
