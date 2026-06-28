@@ -1,5 +1,5 @@
 /* =====================================================================
-   Enjoyable Paper — app.js
+   Hoverleaf — app.js
    Read economics papers without flipping to the back for every exhibit.
 
    Pipeline:

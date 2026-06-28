@@ -1,4 +1,4 @@
-# 📖 Enjoyable Paper
+# 🍃 Hoverleaf
 
 **Stop scrolling to the back of the PDF.**
 
@@ -7,7 +7,7 @@ tables at the very end. Reading the argument means flipping back and forth a
 hundred times to find the "Table 3" the authors are talking about. It's
 tiring, and it breaks your concentration.
 
-**Enjoyable Paper** fixes that. Open a PDF and it reads the whole document,
+**Hoverleaf** fixes that. Open a PDF and it reads the whole document,
 finds every figure and table, and links them to the text. Now when you reach a
 reference like <kbd>Figure 3</kbd> or <kbd>Table 2</kbd>, just **hover it** — the
 exhibit appears right where you are. Click to pin it as a floating window so you
@@ -15,7 +15,7 @@ can keep it in view, or compare two tables side-by-side.
 
 → **It runs entirely in your browser. Your PDF never leaves your device.**
 
-![Enjoyable Paper](assets/screenshot.png)
+![Hoverleaf](assets/screenshot.png)
 
 ---
 
