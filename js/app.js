@@ -1098,6 +1098,7 @@ function wireUI() {
 
   // keyboard
   $("#coachDismiss").onclick = dismissCoach;
+  $("#btnHome").onclick = goHome;
 
   document.addEventListener("keydown", (e) => {
     if (e.target.matches("input")) return;
@@ -1114,9 +1115,32 @@ function wireUI() {
 }
 
 function openFile(file) {
-  State.pageCache.clear(); State.pageModel.clear();
+  resetState();
   const url = URL.createObjectURL(file);
   loadDocument(url, file.name);
+}
+
+function resetState() {
+  if (State.pdf) { try { State.pdf.destroy(); } catch {} }
+  State.pdf = null;
+  State.pageCache.clear(); State.pageModel.clear(); State.pageGraphics.clear();
+  State.exhibits.clear(); State.exhibitOrder = []; State.refs = [];
+  State.pageEls.clear();
+  $("#viewer").innerHTML = "";
+}
+
+// Return to the landing page (e.g. clicking the brand).
+function goHome() {
+  closeAllPips(false);
+  hideHoverCard();
+  dismissCoach();
+  resetState();
+  $("#topbar").hidden = true;
+  $("#reader").hidden = true;
+  $("#sidebar").hidden = true;
+  $("#landing").hidden = false;
+  if (location.search) history.replaceState(null, "", location.pathname); // drop ?pdf= so refresh stays home
+  $("#landing").scrollTop = 0;
 }
 
 // allow ?pdf=URL deep links

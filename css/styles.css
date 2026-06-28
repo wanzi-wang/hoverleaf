@@ -71,8 +71,10 @@ button{font-family:inherit;cursor:pointer}
 }
 .bar-left,.bar-center,.bar-right{display:flex;align-items:center;gap:8px}
 .bar-center{gap:6px}
-.brand{font-size:15px;letter-spacing:.2px}
+.brand{font-size:15px;letter-spacing:.2px;background:none;border:1px solid transparent;color:var(--ink);
+  padding:5px 8px;border-radius:9px;transition:.15s;white-space:nowrap}
 .brand b{font-weight:700}
+.brand:hover{background:var(--accent-soft);color:var(--accent-ink)}
 .doc-title{color:var(--ink-faint);font-size:13px;max-width:34vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .icon-btn{
   border:1px solid transparent;background:transparent;color:var(--ink);
