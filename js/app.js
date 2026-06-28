@@ -22,7 +22,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL("./vendor/pdf.worker.min.mjs", 
  * back to a GitHub-issue link.
  * -------------------------------------------------------------------- */
 const FEEDBACK_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScAPVg-qjV32YxxWKmfOfoTzXA50EHAL61vM2I8kpHZD5F7BA/viewform";
-const FEEDBACK_GITHUB = "https://github.com/wanzi-wang/enjoyable_paper/issues/new";
+const FEEDBACK_GITHUB = "https://github.com/wanzi-wang/hoverleaf/issues/new";
 
 const { Util } = pdfjsLib;
 const $ = (s, r = document) => r.querySelector(s);
