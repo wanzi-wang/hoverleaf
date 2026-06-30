@@ -3,9 +3,9 @@
    A calm reading surface with floating exhibit previews.
    =========================================================== */
 :root{
-  --bg:#fbf6ef;            /* warm paper / cream */
-  --bg-elev:#fffdf9;       /* raised surfaces, a touch lighter than the page */
-  --bg-sunken:#f1e8db;     /* viewer canvas backdrop, so white pages stand out */
+  --bg:#ffffff;            /* clean white */
+  --bg-elev:#ffffff;
+  --bg-sunken:#f7f8fa;     /* viewer canvas backdrop, so white pages stand out */
   --ink:#2a201b;           /* warm near-black brown */
   --ink-soft:#6b5a4e;
   --ink-faint:#9c8b7d;
@@ -139,12 +139,13 @@ button{font-family:inherit;cursor:pointer}
 .lede{font-size:clamp(16px,2vw,19px);line-height:1.65;color:var(--ink-soft);max-width:600px;margin:0 auto 36px}
 .demo-ref{color:var(--link);font-weight:600;white-space:nowrap;text-decoration:underline;text-decoration-color:var(--accent);text-decoration-style:dotted;text-underline-offset:3px}
 #dropzone{
-  border:1px solid var(--line-strong);border-radius:var(--radius);padding:34px 24px;
+  border:2px dashed var(--line-strong);border-radius:var(--radius);padding:34px 24px;
   background:var(--bg-elev);transition:border-color .2s,background .2s,box-shadow .2s;cursor:pointer;
 }
 #dropzone:hover,#dropzone:focus,#dropzone.drag{border-color:var(--accent);background:color-mix(in srgb,var(--accent-soft) 45%,var(--bg-elev));outline:none}
 #dropzone.drag{box-shadow:0 0 0 3px var(--accent-soft),var(--shadow)}
-.dz-icon{color:var(--accent);opacity:.85;display:flex;justify-content:center;margin-bottom:10px}
+.dz-icon{color:var(--accent);opacity:.85;display:flex;justify-content:center;margin-bottom:10px;animation:bob 2.4s ease-in-out infinite}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(5px)}}
 .dz-icon svg{width:26px;height:26px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .dz-main{font-size:18px;font-weight:600;color:var(--ink)}
 .dz-link{color:var(--accent-ink);text-decoration:underline;text-underline-offset:2px}
