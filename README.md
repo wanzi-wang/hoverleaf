@@ -42,9 +42,15 @@ can keep it in view, or compare two tables side-by-side.
 2. Drop in a PDF, choose a file, paste a PDF link, or hit **Try the live demo paper**.
 3. Read. Hover any underlined reference to preview the figure or table.
 
-You can also deep-link a PDF: `index.html?pdf=https://example.com/paper.pdf`
-(the linked site must allow cross-origin access; otherwise just download and
-drop the file).
+You can also deep-link a PDF: `index.html?pdf=https://example.com/paper.pdf`.
+
+**About pasting links:** Hoverleaf turns an abstract/landing-page URL into the
+direct PDF where it can (e.g. an `arxiv.org/abs/…` link becomes the
+`arxiv.org/pdf/…` PDF, which loads in-browser). But because everything runs
+client-side, the linked site must allow cross-origin (CORS) fetches — arXiv and
+many open repositories do; **NBER, SSRN, and paywalled publishers (AEA, Elsevier,
+JSTOR…) do not**, and SSRN/paywalled PDFs also need a login. For those, download
+the PDF and drop it here — Hoverleaf will tell you which case you've hit.
 
 ### Keyboard shortcuts
 

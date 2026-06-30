@@ -1038,6 +1038,143 @@ function goToPage(n) {
 }
 
 /* =====================================================================
+   TOP NAV — uppercase exhibit-type navigation with live counts
+   ===================================================================== */
+let currentFilter = "all";
+function buildTopnav() {
+  const nav = $("#topnav");
+  const c = countKinds();
+  const items = [{ f: "all", label: "All" }];
+  if (c.figure) items.push({ f: "figure", label: "Figures", n: c.figure });
+  if (c.table) items.push({ f: "table", label: "Tables", n: c.table });
+  if (c.equation) items.push({ f: "equation", label: "Equations", n: c.equation });
+  nav.innerHTML = "";
+  items.forEach((it, i) => {
+    if (i) nav.insertAdjacentHTML("beforeend", `<span class="nav-dot">·</span>`);
+    const b = document.createElement("button");
+    b.dataset.nav = it.f;
+    b.innerHTML = `<span>${it.label}</span>${it.n ? `<span class="nav-count">${it.n}</span>` : ""}`;
+    b.onclick = () => setFilter(it.f);
+    nav.appendChild(b);
+  });
+  if (State.exhibitOrder.length) {
+    nav.insertAdjacentHTML("beforeend", `<span class="nav-dot">·</span>`);
+    const ov = document.createElement("button");
+    ov.className = "nav-ov";
+    ov.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></svg><span>Overview</span>`;
+    ov.onclick = openOverview;
+    nav.appendChild(ov);
+  }
+  syncNav();
+}
+function syncNav() {
+  $$("#topnav button[data-nav]").forEach((b) => b.classList.toggle("active", b.dataset.nav === currentFilter));
+}
+function setFilter(kind) {
+  currentFilter = kind;
+  syncNav();
+  const titles = { all: "All exhibits", figure: "Figures", table: "Tables", equation: "Equations" };
+  $("#sideTitle").textContent = titles[kind] || "Exhibits";
+  if ($("#sidebar").hidden) $("#sidebar").hidden = false;
+  buildSidebar(kind);
+}
+
+/* =====================================================================
+   OVERVIEW — a visual dashboard of the whole paper
+   ===================================================================== */
+function refCounts() {
+  const m = new Map();
+  for (const r of State.refs) { if (resolveExhibit(r.key)) m.set(r.key, (m.get(r.key) || 0) + 1); }
+  return m;
+}
+function kColor(kind) {
+  return getComputedStyle(document.documentElement).getPropertyValue("--c-" + kind).trim() || "#888";
+}
+
+function openOverview() {
+  const c = countKinds();
+  const total = c.figure + c.table + c.equation;
+  const refs = refCounts();
+  const totalRefs = [...refs.values()].reduce((a, b) => a + b, 0);
+  $("#ovDoc").textContent = State.filename;
+
+  const stat = (v, l) => `<div class="ov-stat"><div class="v">${v}</div><div class="l">${l}</div></div>`;
+  const stats = `<div class="ov-stats">
+    ${stat(State.numPages, "pages")}
+    ${stat(total, "exhibits")}
+    ${stat(c.figure, "figures")}
+    ${stat(c.table, "tables")}
+    ${stat(c.equation, "equations")}
+    ${stat(totalRefs, "links")}
+  </div>`;
+
+  const segs = [
+    { k: "figure", label: "Figures", v: c.figure }, { k: "table", label: "Tables", v: c.table },
+    { k: "equation", label: "Equations", v: c.equation },
+  ].filter((s) => s.v);
+  const donut = `<section class="ov-sec"><h4>Composition</h4>
+    <div class="ov-donut">${donutSVG(segs, total)}
+      <div class="ov-legend">${segs.map((s) => `<div class="ov-leg"><span class="sw" style="background:${kColor(s.k)}"></span><span class="lk">${s.label}</span><span class="lv">${s.v}</span><span class="lp">${Math.round(s.v / total * 100)}%</span></div>`).join("")}</div>
+    </div></section>`;
+
+  const map = `<section class="ov-sec wide"><h4>Where everything lives <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--ink-faint)">— click a marker to jump</span></h4>${mapSVG()}</section>`;
+
+  const top = [...refs.entries()].map(([k, n]) => ({ ex: resolveExhibit(k), n }))
+    .filter((x) => x.ex).sort((a, b) => b.n - a.n).slice(0, 8);
+  const max = top.length ? top[0].n : 1;
+  const bars = `<section class="ov-sec wide"><h4>Most-referenced exhibits</h4>${
+    top.length ? `<div class="ov-bars">${top.map((x) => `<div class="ov-bar" data-jump="${x.ex.key}"><span class="ov-bar-lab">${kindLabel(x.ex.kind)} ${x.ex.id}</span><span class="ov-bar-track"><span class="ov-bar-fill" style="width:${x.n / max * 100}%;background:${kColor(x.ex.kind)}"></span></span><span class="ov-bar-n">${x.n}</span></div>`).join("")}</div>`
+      : `<div class="ov-empty">No in-text references were detected.</div>`}</section>`;
+
+  $("#ovBody").innerHTML = stats + `<div class="ov-grid">${donut}${map}${bars}</div>`;
+  $$("#ovBody [data-jump]").forEach((el) => el.onclick = () => {
+    const ex = State.exhibits.get(el.dataset.jump); if (!ex) return;
+    closeOverview(); scrollToExhibit(ex); openPip(ex);
+  });
+  $$("#ovBody .ov-dot").forEach((el) => el.onclick = () => {
+    const ex = State.exhibits.get(el.dataset.key); if (!ex) return;
+    closeOverview(); scrollToExhibit(ex); openPip(ex);
+  });
+  $("#overview").hidden = false;
+}
+function closeOverview() { $("#overview").hidden = true; }
+
+function donutSVG(segs, total) {
+  const cx = 66, cy = 66, r = 50, sw = 22, C = 2 * Math.PI * r;
+  let off = 0, arcs = "";
+  for (const s of segs) {
+    const len = (s.v / (total || 1)) * C;
+    arcs += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${kColor(s.k)}" stroke-width="${sw}" stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`;
+    off += len;
+  }
+  return `<svg class="donut" viewBox="0 0 132 132" role="img" aria-label="Exhibit composition">
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--bg-sunken)" stroke-width="${sw}"/>
+    ${arcs}<text class="donut-num" x="66" y="70">${total}</text><text class="donut-lab" x="66" y="86">exhibits</text></svg>`;
+}
+
+function mapSVG() {
+  const W = 1000, lanes = [["figure", "Fig"], ["table", "Tab"], ["equation", "Eq"]].filter(([k]) => countKinds()[k]);
+  const padL = 44, padR = 16, top = 8, laneH = 30, H = top + lanes.length * laneH + 22;
+  const N = Math.max(1, State.numPages);
+  const xOf = (pg) => padL + (N === 1 ? 0.5 : (pg - 1) / (N - 1)) * (W - padL - padR);
+  let svg = `<svg class="ov-map" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Exhibit positions by page">`;
+  lanes.forEach(([k, lab], i) => {
+    const y = top + i * laneH + laneH / 2;
+    svg += `<line class="axis" x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}"/>`;
+    svg += `<text class="lane-lab" x="6" y="${y + 3}">${lab}</text>`;
+    for (const key of State.exhibitOrder) {
+      const ex = State.exhibits.get(key);
+      if (ex.kind !== k) continue;
+      svg += `<circle class="ov-dot" data-key="${key}" cx="${xOf(ex.page).toFixed(1)}" cy="${y}" r="4.5" fill="${kColor(k)}"><title>${kindLabel(k)} ${ex.id} — page ${ex.page}</title></circle>`;
+    }
+  });
+  const axisY = H - 12;
+  svg += `<text x="${padL}" y="${axisY}" text-anchor="start">p.1</text><text x="${W - padR}" y="${axisY}" text-anchor="end">p.${N}</text>`;
+  svg += `</svg>`;
+  return svg;
+}
+
+/* =====================================================================
    SIDEBAR — exhibit rail
    ===================================================================== */
 function buildSidebar(filter = "all") {
@@ -1072,6 +1209,55 @@ async function renderThumb(el) {
   try { await renderRegion(el, ex, 64); } catch {}
 }
 function escapeHtml(s) { return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+/* =====================================================================
+   Resolve a pasted link to a *direct* PDF URL.
+   Users usually paste the abstract/landing page, not the PDF itself.
+   Returns { url, label, hint }. `hint` (if set) explains a known problem
+   before we even try the fetch.
+   ===================================================================== */
+function resolvePdfUrl(raw) {
+  let u;
+  try { u = new URL(raw); } catch { return { url: raw, label: raw }; }
+  const host = u.hostname.replace(/^www\./, "");
+  const file = (p) => p.split("/").filter(Boolean).pop() || "remote.pdf";
+
+  // arXiv: /abs/ID or /pdf/ID(vN) → the CORS-enabled PDF endpoint (works in-browser)
+  if (host.endsWith("arxiv.org")) {
+    const m = u.pathname.match(/\/(?:abs|pdf)\/(.+?)(?:\.pdf)?$/);
+    if (m) { const id = m[1]; return { url: `https://arxiv.org/pdf/${id}`, label: `arXiv ${id}.pdf` }; }
+  }
+
+  // NBER: /papers/wNNNNN → direct PDF (NBER sends no CORS header, so warn it'll likely be blocked)
+  if (host.endsWith("nber.org")) {
+    const m = u.pathname.match(/\/papers\/(w\d+)/i);
+    if (m) {
+      const id = m[1].toLowerCase();
+      return {
+        url: `https://www.nber.org/system/files/working_papers/${id}/${id}.pdf`,
+        label: `NBER ${id}.pdf`,
+        hint: "NBER doesn't allow other sites to fetch its PDFs (no CORS). If this fails, download the PDF and drop it here.",
+      };
+    }
+  }
+
+  // SSRN abstract page is HTML, and the real download is session-gated — can't be fetched directly.
+  if (host.endsWith("ssrn.com") && /papers\.cfm/i.test(u.pathname) && u.searchParams.get("abstract_id"))
+    return { url: raw, label: "SSRN paper", hint: "That's the SSRN abstract page, not a PDF — and SSRN gates the download behind a session. Click \"Download This Paper\" on SSRN, then drop the file here." };
+
+  // AEA: pdfplus is behind the subscription paywall and sends no CORS header.
+  if (host.endsWith("aeaweb.org") && /\/doi\/(pdf|pdfplus)\//i.test(u.pathname))
+    return { url: raw, label: file(u.pathname), hint: "AEA articles are paywalled and can't be fetched from another site. Open it on aeaweb.org, download the PDF, and drop it here." };
+
+  return { url: raw, label: file(u.pathname) };
+}
+
+// Resolve a link then hand off to loadDocument, surfacing any up-front hint.
+function loadFromLink(raw) {
+  const { url, label, hint } = resolvePdfUrl(raw);
+  if (hint) toast(hint, 7000);
+  loadDocument({ url, withCredentials: false }, label);
+}
 
 /* =====================================================================
    LOAD a document end-to-end
@@ -1124,11 +1310,15 @@ async function loadDocument(source, label) {
     setLoading(false);
     $("#landing").hidden = false;
     const remote = typeof source === "object" && source.url;
-    const corsLike = /unexpected|fetch|cors|networkerror|failed to|load/i.test(err.message || "") || err.name === "UnexpectedResponseException";
-    if (remote && corsLike)
-      toast("That site blocks loading PDFs from other pages. Download the file and drop it here instead.", 6500);
+    const corsLike = /cors|networkerror|cross-origin|access-control|unexpected/i.test(err.message || "") || err.name === "UnexpectedResponseException";
+    if (remote && err.name === "InvalidPDFException")
+      toast("That link returned a web page, not a PDF. Paste the direct PDF link (the one ending in .pdf), or download it and drop the file here.", 7000);
     else if (err.name === "InvalidPDFException")
       toast("That file doesn't look like a valid PDF.", 5000);
+    else if (remote && corsLike)
+      toast("That site blocks loading PDFs from other pages. Download the file and drop it here instead.", 6500);
+    else if (remote)
+      toast("Couldn't fetch that link (the site may block it or require a login). Download the PDF and drop it here instead.", 6500);
     else
       toast(`Couldn't open this PDF: ${err.message || err}`, 5000);
   }
@@ -1168,10 +1358,7 @@ function enterReader() {
   $("#docTitle").textContent = State.filename;
   $("#pageTotal").textContent = `/ ${State.numPages}`;
   $("#pageInput").max = State.numPages;
-  const c = countKinds();
-  $("#exhibitCounts").textContent = [
-    c.figure && `${c.figure} fig`, c.table && `${c.table} tab`, c.equation && `${c.equation} eq`,
-  ].filter(Boolean).join(" · ");
+  buildTopnav();
   buildPagePlaceholders();
   buildSidebar("all");
   $("#sidebar").hidden = State.exhibitOrder.length === 0 || window.innerWidth <= 760;
@@ -1225,9 +1412,11 @@ function trackScroll() {
    ===================================================================== */
 function wireUI() {
   // theme
+  const SUN = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+  const MOON = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>';
   const applyTheme = (t) => {
     document.documentElement.dataset.theme = t;
-    $("#btnTheme").textContent = t === "dark" ? "☀️" : "🌙";
+    $("#btnTheme").innerHTML = t === "dark" ? SUN : MOON;
     try { localStorage.setItem("ep-theme", t); } catch {}
   };
   applyTheme(localStorage.getItem("ep-theme") || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
@@ -1250,7 +1439,7 @@ function wireUI() {
 
   // demo + url
   $("#btnDemo").onclick = () => loadDocument("assets/demo.pdf", "Demo — Coffee, Commits & Causal Effects.pdf");
-  $("#urlForm").onsubmit = (e) => { e.preventDefault(); const u = $("#urlInput").value.trim(); if (u) loadDocument({ url: u, withCredentials: false }, u.split("/").pop() || "remote.pdf"); };
+  $("#urlForm").onsubmit = (e) => { e.preventDefault(); const u = $("#urlInput").value.trim(); if (u) loadFromLink(u); };
 
   // zoom + page
   $("#btnZoomIn").onclick = () => setZoom(State.zoom + 0.15);
@@ -1260,13 +1449,10 @@ function wireUI() {
     if (e.ctrlKey || e.metaKey) { e.preventDefault(); setZoom(State.zoom + (e.deltaY < 0 ? 0.12 : -0.12)); }
   }, { passive: false }));
 
-  // sidebar toggle + filters
+  // sidebar toggle + overview
   $("#btnSidebar").onclick = () => { const s = $("#sidebar"); s.hidden = !s.hidden; };
-  $(".side-filter").onclick = (e) => {
-    const b = e.target.closest(".chip"); if (!b) return;
-    $$(".chip").forEach((c) => c.classList.toggle("active", c === b));
-    buildSidebar(b.dataset.filter);
-  };
+  $("#btnOverview2").onclick = openOverview;
+  $$("[data-ovclose]").forEach((el) => (el.onclick = closeOverview));
 
   // keyboard
   $("#coachDismiss").onclick = dismissCoach;
@@ -1277,7 +1463,7 @@ function wireUI() {
 
   document.addEventListener("keydown", (e) => {
     if (e.target.matches("input")) return;
-    if (e.key === "Escape") { if (!$("#fbModal").hidden) closeFeedback(); else if (openPips.size) closeAllPips(true); else { hideHoverCard(); dismissCoach(); } }
+    if (e.key === "Escape") { if (!$("#overview").hidden) closeOverview(); else if (!$("#fbModal").hidden) closeFeedback(); else if (openPips.size) closeAllPips(true); else { hideHoverCard(); dismissCoach(); } }
     else if (e.key === "d" || e.key === "D") $("#btnTheme").click();
     else if (e.key === "f" || e.key === "F") $("#btnSidebar").click();
     else if (e.key === "o" || e.key === "O") fileInput.click();
@@ -1337,7 +1523,7 @@ function goHome() {
 // allow ?pdf=URL deep links
 function bootFromQuery() {
   const u = new URLSearchParams(location.search).get("pdf");
-  if (u) loadDocument({ url: u, withCredentials: false }, u.split("/").pop() || "remote.pdf");
+  if (u) loadFromLink(u);
 }
 
 wireUI();
